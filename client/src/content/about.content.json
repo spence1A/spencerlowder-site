@@ -1,0 +1,49 @@
+{
+  "title": "GAME BOX World Map",
+  "description": "Welcome to the Game Box world! Explore the map and discover what lies ahead.",
+  "hotspots": [
+    {
+      "id": "world-1-1",
+      "label": "World 1-1",
+      "x": 0.15,
+      "y": 0.6,
+      "icon": "castle",
+      "description": "The classic first level. Navigate through pipes, stomp goombas, and discover hidden secrets!",
+      "unlocked": true,
+      "action": "play-level",
+      "levelId": "level-1-1"
+    },
+    {
+      "id": "about-creator",
+      "label": "Creator's Workshop",
+      "x": 0.5,
+      "y": 0.3,
+      "icon": "sign",
+      "description": "This game was built with React, Kaboom.js, and a lot of love for retro gaming. All assets are original — no Nintendo sprites were harmed in the making of this game.",
+      "unlocked": true,
+      "action": "info"
+    },
+    {
+      "id": "secret-zone",
+      "label": "Secret Zone",
+      "x": 0.8,
+      "y": 0.5,
+      "icon": "mystery",
+      "description": "Complete World 1-1 to unlock this area. What mysteries await?",
+      "unlocked": false,
+      "unlockCondition": "completed_1_1",
+      "action": "info"
+    },
+    {
+      "id": "world-1-2",
+      "label": "World 1-2",
+      "x": 0.35,
+      "y": 0.7,
+      "icon": "pipe",
+      "description": "Coming soon! The underground adventure awaits...",
+      "unlocked": false,
+      "unlockCondition": "completed_1_1",
+      "action": "coming-soon"
+    }
+  ]
+}
