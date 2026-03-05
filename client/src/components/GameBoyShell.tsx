@@ -8,7 +8,14 @@
  * Invisible touch zones overlay the D-pad, A, B, INFO, and RESTART buttons.
  * 
  * Image dimensions: 944 x 2048
- * Screen area (inner green LCD): ~11.4% left, ~12.1% top, ~77.1% width, ~23.1% height
+ * 
+ * Coordinate reference (% of image):
+ *   Screen LCD:    top=17.5%, left=15.5%, width=70%, height=26%
+ *   D-pad center:  (29%, 62.5%)
+ *   A button:      (78%, 59.5%)
+ *   B button:      (56%, 64%)
+ *   INFO:          (43%, 87.5%)
+ *   RESTART:       (59%, 87.5%)
  */
 
 import { useRef, useEffect, useCallback, useState } from 'react';
@@ -18,43 +25,119 @@ import { setTouchInput, initKeyboardInput, InputState } from '../game/inputManag
 const SKIN_URL = 'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboy-skin_288fe3ff.png';
 
 // Screen position as percentage of image dimensions
-// Measured from pixel analysis of the 944x2048 image
-// The inner LCD area (green screen) inside the black bezel
+// Carefully measured from the 944x2048 image
+// This is the inner LCD area (dark green screen) inside the black bezel
 const SCREEN = {
-  left: 10,
-  top: 14.8,
-  width: 80,
-  height: 26.5,
+  left: 15.5,
+  top: 18.2,
+  width: 70,
+  height: 24.5,
 };
 
 // Touch zone definitions as percentage of image dimensions
-// Each zone: [left%, top%, width%, height%]
 interface TouchZone {
   id: keyof InputState;
   left: number;
   top: number;
   width: number;
   height: number;
+  label?: string;
 }
+
+// D-pad center: ~29%, 62.5%
+// D-pad is about 20% wide and 10% tall
+const DPAD_CX = 29;
+const DPAD_CY = 62.5;
+const DPAD_ARM_W = 7;   // half-width of each arm
+const DPAD_ARM_H = 5;   // half-height of each arm
+
+// A button center: ~77%, 66% — radius ~7%
+const A_CX = 77;
+const A_CY = 66;
+const BTN_R = 7;
+
+// B button center: ~57%, 69% — radius ~6%
+const B_CX = 57;
+const B_CY = 69;
+const BTN_R_B = 6;
 
 const TOUCH_ZONES: TouchZone[] = [
   // D-pad Up
-  { id: 'up', left: 15.5, top: 50.8, width: 8, height: 4.5 },
+  {
+    id: 'up',
+    left: DPAD_CX - DPAD_ARM_W,
+    top: DPAD_CY - DPAD_ARM_H * 2.5,
+    width: DPAD_ARM_W * 2,
+    height: DPAD_ARM_H * 2,
+    label: 'UP',
+  },
   // D-pad Down
-  { id: 'down', left: 15.5, top: 58.5, width: 8, height: 4.5 },
+  {
+    id: 'down',
+    left: DPAD_CX - DPAD_ARM_W,
+    top: DPAD_CY + DPAD_ARM_H * 0.5,
+    width: DPAD_ARM_W * 2,
+    height: DPAD_ARM_H * 2,
+    label: 'DOWN',
+  },
   // D-pad Left
-  { id: 'left', left: 8, top: 53.7, width: 8, height: 5.5 },
+  {
+    id: 'left',
+    left: DPAD_CX - DPAD_ARM_W * 3,
+    top: DPAD_CY - DPAD_ARM_H,
+    width: DPAD_ARM_W * 2.5,
+    height: DPAD_ARM_H * 2,
+    label: 'LEFT',
+  },
   // D-pad Right
-  { id: 'right', left: 23, top: 53.7, width: 8, height: 5.5 },
-  // A Button (Jump)
-  { id: 'jump', left: 72, top: 49, width: 14, height: 7 },
-  // B Button (Sprint)
-  { id: 'sprint', left: 55, top: 54, width: 14, height: 7 },
-  // INFO Button
-  { id: 'info', left: 28, top: 74.5, width: 14, height: 3.5 },
-  // RESTART Button
-  { id: 'restart', left: 42, top: 74.5, width: 16, height: 3.5 },
+  {
+    id: 'right',
+    left: DPAD_CX + DPAD_ARM_W * 0.5,
+    top: DPAD_CY - DPAD_ARM_H,
+    width: DPAD_ARM_W * 2.5,
+    height: DPAD_ARM_H * 2,
+    label: 'RIGHT',
+  },
+  // A Button (Jump) — large circle upper-right
+  {
+    id: 'jump',
+    left: A_CX - BTN_R,
+    top: A_CY - BTN_R,
+    width: BTN_R * 2,
+    height: BTN_R * 2,
+    label: 'A',
+  },
+  // B Button (Sprint) — circle below-left of A
+  {
+    id: 'sprint',
+    left: B_CX - BTN_R_B,
+    top: B_CY - BTN_R_B,
+    width: BTN_R_B * 2,
+    height: BTN_R_B * 2,
+    label: 'B',
+  },
+  // INFO Button — small pill near bottom
+  {
+    id: 'info',
+    left: 37,
+    top: 85.5,
+    width: 12,
+    height: 4,
+    label: 'INFO',
+  },
+  // RESTART Button — small pill near bottom
+  {
+    id: 'restart',
+    left: 52,
+    top: 85.5,
+    width: 14,
+    height: 4,
+    label: 'RESTART',
+  },
 ];
+
+// Set to true to visualize touch zones for debugging
+const DEBUG_TOUCH_ZONES = false;
 
 export default function GameBoyShell() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -90,31 +173,37 @@ export default function GameBoyShell() {
   }, []);
 
   // Touch handlers
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    e.preventDefault();
+  const findZone = useCallback((clientX: number, clientY: number): TouchZone | null => {
     const shell = shellRef.current;
-    if (!shell) return;
+    if (!shell) return null;
     const rect = shell.getBoundingClientRect();
+    const xPct = ((clientX - rect.left) / rect.width) * 100;
+    const yPct = ((clientY - rect.top) / rect.height) * 100;
 
-    for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      const xPct = ((touch.clientX - rect.left) / rect.width) * 100;
-      const yPct = ((touch.clientY - rect.top) / rect.height) * 100;
-
-      for (const zone of TOUCH_ZONES) {
-        if (
-          xPct >= zone.left &&
-          xPct <= zone.left + zone.width &&
-          yPct >= zone.top &&
-          yPct <= zone.top + zone.height
-        ) {
-          activeTouches.current.set(touch.identifier, zone.id);
-          setTouchInput(zone.id, true);
-          break;
-        }
+    for (const zone of TOUCH_ZONES) {
+      if (
+        xPct >= zone.left &&
+        xPct <= zone.left + zone.width &&
+        yPct >= zone.top &&
+        yPct <= zone.top + zone.height
+      ) {
+        return zone;
       }
     }
+    return null;
   }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const touch = e.changedTouches[i];
+      const zone = findZone(touch.clientX, touch.clientY);
+      if (zone) {
+        activeTouches.current.set(touch.identifier, zone.id);
+        setTouchInput(zone.id, true);
+      }
+    }
+  }, [findZone]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
@@ -130,36 +219,39 @@ export default function GameBoyShell() {
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
-    const shell = shellRef.current;
-    if (!shell) return;
-    const rect = shell.getBoundingClientRect();
-
     for (let i = 0; i < e.changedTouches.length; i++) {
       const touch = e.changedTouches[i];
-      const xPct = ((touch.clientX - rect.left) / rect.width) * 100;
-      const yPct = ((touch.clientY - rect.top) / rect.height) * 100;
-
-      // Release previous button for this touch
       const prevButton = activeTouches.current.get(touch.identifier);
-      if (prevButton) {
+      const zone = findZone(touch.clientX, touch.clientY);
+
+      if (prevButton && (!zone || zone.id !== prevButton)) {
         setTouchInput(prevButton, false);
         activeTouches.current.delete(touch.identifier);
       }
 
-      // Check if moved to a new button
-      for (const zone of TOUCH_ZONES) {
-        if (
-          xPct >= zone.left &&
-          xPct <= zone.left + zone.width &&
-          yPct >= zone.top &&
-          yPct <= zone.top + zone.height
-        ) {
-          activeTouches.current.set(touch.identifier, zone.id);
-          setTouchInput(zone.id, true);
-          break;
-        }
+      if (zone && zone.id !== prevButton) {
+        activeTouches.current.set(touch.identifier, zone.id);
+        setTouchInput(zone.id, true);
       }
     }
+  }, [findZone]);
+
+  // Also handle mouse clicks for desktop testing of button zones
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const zone = findZone(e.clientX, e.clientY);
+    if (zone) {
+      setTouchInput(zone.id, true);
+      // Release after a short delay for one-shot buttons
+      if (zone.id === 'info' || zone.id === 'restart') {
+        setTimeout(() => setTouchInput(zone.id, false), 150);
+      }
+    }
+  }, [findZone]);
+
+  const handleMouseUp = useCallback(() => {
+    // Release all non-oneshot buttons
+    const buttons: (keyof InputState)[] = ['left', 'right', 'up', 'down', 'jump', 'sprint'];
+    buttons.forEach(b => setTouchInput(b, false));
   }, []);
 
   return (
@@ -181,6 +273,9 @@ export default function GameBoyShell() {
         onTouchEnd={handleTouchEnd}
         onTouchMove={handleTouchMove}
         onTouchCancel={handleTouchEnd}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
       >
         {/* Game Boy Skin Image */}
         <img
@@ -199,7 +294,7 @@ export default function GameBoyShell() {
             top: `${SCREEN.top}%`,
             width: `${SCREEN.width}%`,
             height: `${SCREEN.height}%`,
-            borderRadius: '3px',
+            borderRadius: '2px',
           }}
         >
           <canvas
@@ -218,12 +313,12 @@ export default function GameBoyShell() {
         <div
           className="absolute pointer-events-none"
           style={{
-            left: `${SCREEN.left - 1}%`,
-            top: `${SCREEN.top - 1}%`,
-            width: `${SCREEN.width + 2}%`,
-            height: `${SCREEN.height + 2}%`,
-            boxShadow: '0 0 20px 5px rgba(139, 172, 15, 0.15)',
-            borderRadius: '4px',
+            left: `${SCREEN.left - 0.5}%`,
+            top: `${SCREEN.top - 0.5}%`,
+            width: `${SCREEN.width + 1}%`,
+            height: `${SCREEN.height + 1}%`,
+            boxShadow: '0 0 15px 3px rgba(139, 172, 15, 0.12)',
+            borderRadius: '3px',
           }}
         />
 
@@ -241,18 +336,24 @@ export default function GameBoyShell() {
           }}
         />
 
-        {/* Debug: touch zone visualization (hidden in production) */}
-        {false && TOUCH_ZONES.map((zone, i) => (
+        {/* Debug: touch zone visualization */}
+        {DEBUG_TOUCH_ZONES && TOUCH_ZONES.map((zone, i) => (
           <div
             key={i}
-            className="absolute border border-red-500 bg-red-500/20"
+            className="absolute border-2 border-red-500 bg-red-500/20 flex items-center justify-center"
             style={{
               left: `${zone.left}%`,
               top: `${zone.top}%`,
               width: `${zone.width}%`,
               height: `${zone.height}%`,
+              zIndex: 10,
+              fontSize: '8px',
+              color: 'red',
+              fontWeight: 'bold',
             }}
-          />
+          >
+            {zone.label}
+          </div>
         ))}
       </div>
 
