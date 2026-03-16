@@ -1,191 +1,261 @@
 /**
  * GameBoyShell Component
- * 
- * Design: Clean Void — Pure black background, device floats centered.
- * 
- * Uses the provided gameboy-skin.png as the base image.
- * Positions the Kaboom canvas precisely in the screen cutout area.
- * Invisible touch zones overlay the D-pad, A, B, INFO, and RESTART buttons.
- * 
- * Image dimensions: 944 x 2048
- * 
- * Coordinate reference (% of image):
- *   Screen LCD:    top=17.5%, left=15.5%, width=70%, height=26%
- *   D-pad center:  (29%, 62.5%)
- *   A button:      (78%, 59.5%)
- *   B button:      (56%, 64%)
- *   INFO:          (43%, 87.5%)
- *   RESTART:       (59%, 87.5%)
+ *
+ * Design: Clean Void — pure black background, device floats centered.
+ *
+ * Skin image: 944 × 2048 px
+ *
+ * LCD screen area (measured from black bezel boundaries):
+ *   Bezel outer: top=12.2%, bottom=50.5%, left=6.7%, right=92.8%
+ *   Inner LCD:   top=13.5%, bottom=49.5%, left=8.8%, right=91.0%
+ *   Width: 82.2%  Height: 36.0%
+ *
+ * Button positions (% of skin image):
+ *   D-pad center: 29% x, 63% y
+ *   A button:     76% x, 60% y
+ *   B button:     57% x, 65% y
+ *   SELECT (INFO pill): 30% x, 85.5% y
+ *   START (RESTART pill): 46% x, 85.5% y
  */
 
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { startGame, stopGame } from '../game';
-import { setTouchInput, initKeyboardInput, InputState } from '../game/inputManager';
+import { WasmBoy } from 'wasmboy';
 
-const SKIN_URL = 'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboy-skin_288fe3ff.png';
+const SKIN_URL =
+  'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboy-skin_288fe3ff.png';
 
-// Screen position as percentage of image dimensions
-// Carefully measured from the 944x2048 image
-// This is the inner LCD area (dark green screen) inside the black bezel
+const ROM_URL =
+  'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
+
+// ── Screen area as % of the skin image (944×2048) ──
 const SCREEN = {
-  left: 15.5,
-  top: 18.2,
-  width: 70,
-  height: 24.5,
+  left: 8.8,
+  top: 13.5,
+  width: 82.2,
+  height: 36.0,
 };
 
-// Touch zone definitions as percentage of image dimensions
+// ── Touch zones as % of the skin image ──
+// D-pad
+const DPAD_CX = 29;
+const DPAD_CY = 63;
+const DPAD_ARM_W = 6.5;
+const DPAD_ARM_H = 4.5;
+
+// A button (large round, upper-right area)
+const A_CX = 75;
+const A_CY = 62;
+const BTN_R = 6.5;
+
+// B button (smaller, lower-left of A)
+const B_CX = 57;
+const B_CY = 67;
+const BTN_R_B = 5.5;
+
+// SELECT = INFO pill
+const SELECT_L = 29;
+const SELECT_T = 84.5;
+const PILL_W = 10;
+const PILL_H = 3.5;
+
+// START = RESTART pill
+const START_L = 44;
+const START_T = 84.5;
+
+interface JoypadState {
+  UP: boolean;
+  DOWN: boolean;
+  LEFT: boolean;
+  RIGHT: boolean;
+  A: boolean;
+  B: boolean;
+  SELECT: boolean;
+  START: boolean;
+}
+
 interface TouchZone {
-  id: keyof InputState;
+  id: keyof JoypadState | 'restart';
   left: number;
   top: number;
   width: number;
   height: number;
-  label?: string;
+  label: string;
 }
 
-// D-pad center: ~29%, 62.5%
-// D-pad is about 20% wide and 10% tall
-const DPAD_CX = 29;
-const DPAD_CY = 62.5;
-const DPAD_ARM_W = 7;   // half-width of each arm
-const DPAD_ARM_H = 5;   // half-height of each arm
-
-// A button center: ~77%, 66% — radius ~7%
-const A_CX = 77;
-const A_CY = 66;
-const BTN_R = 7;
-
-// B button center: ~57%, 69% — radius ~6%
-const B_CX = 57;
-const B_CY = 69;
-const BTN_R_B = 6;
-
 const TOUCH_ZONES: TouchZone[] = [
-  // D-pad Up
-  {
-    id: 'up',
-    left: DPAD_CX - DPAD_ARM_W,
-    top: DPAD_CY - DPAD_ARM_H * 2.5,
-    width: DPAD_ARM_W * 2,
-    height: DPAD_ARM_H * 2,
-    label: 'UP',
-  },
-  // D-pad Down
-  {
-    id: 'down',
-    left: DPAD_CX - DPAD_ARM_W,
-    top: DPAD_CY + DPAD_ARM_H * 0.5,
-    width: DPAD_ARM_W * 2,
-    height: DPAD_ARM_H * 2,
-    label: 'DOWN',
-  },
-  // D-pad Left
-  {
-    id: 'left',
-    left: DPAD_CX - DPAD_ARM_W * 3,
-    top: DPAD_CY - DPAD_ARM_H,
-    width: DPAD_ARM_W * 2.5,
-    height: DPAD_ARM_H * 2,
-    label: 'LEFT',
-  },
-  // D-pad Right
-  {
-    id: 'right',
-    left: DPAD_CX + DPAD_ARM_W * 0.5,
-    top: DPAD_CY - DPAD_ARM_H,
-    width: DPAD_ARM_W * 2.5,
-    height: DPAD_ARM_H * 2,
-    label: 'RIGHT',
-  },
-  // A Button (Jump) — large circle upper-right
-  {
-    id: 'jump',
-    left: A_CX - BTN_R,
-    top: A_CY - BTN_R,
-    width: BTN_R * 2,
-    height: BTN_R * 2,
-    label: 'A',
-  },
-  // B Button (Sprint) — circle below-left of A
-  {
-    id: 'sprint',
-    left: B_CX - BTN_R_B,
-    top: B_CY - BTN_R_B,
-    width: BTN_R_B * 2,
-    height: BTN_R_B * 2,
-    label: 'B',
-  },
-  // INFO Button — small pill near bottom
-  {
-    id: 'info',
-    left: 37,
-    top: 85.5,
-    width: 12,
-    height: 4,
-    label: 'INFO',
-  },
-  // RESTART Button — small pill near bottom
-  {
-    id: 'restart',
-    left: 52,
-    top: 85.5,
-    width: 14,
-    height: 4,
-    label: 'RESTART',
-  },
+  // D-pad arms
+  { id: 'UP',    left: DPAD_CX - DPAD_ARM_W / 2, top: DPAD_CY - DPAD_ARM_H * 2.2, width: DPAD_ARM_W, height: DPAD_ARM_H * 1.8, label: '▲' },
+  { id: 'DOWN',  left: DPAD_CX - DPAD_ARM_W / 2, top: DPAD_CY + DPAD_ARM_H * 0.4, width: DPAD_ARM_W, height: DPAD_ARM_H * 1.8, label: '▼' },
+  { id: 'LEFT',  left: DPAD_CX - DPAD_ARM_W * 2.8, top: DPAD_CY - DPAD_ARM_H / 2, width: DPAD_ARM_W * 2.2, height: DPAD_ARM_H, label: '◀' },
+  { id: 'RIGHT', left: DPAD_CX + DPAD_ARM_W * 0.6, top: DPAD_CY - DPAD_ARM_H / 2, width: DPAD_ARM_W * 2.2, height: DPAD_ARM_H, label: '▶' },
+  // A button
+  { id: 'A', left: A_CX - BTN_R, top: A_CY - BTN_R, width: BTN_R * 2, height: BTN_R * 2, label: 'A' },
+  // B button
+  { id: 'B', left: B_CX - BTN_R_B, top: B_CY - BTN_R_B, width: BTN_R_B * 2, height: BTN_R_B * 2, label: 'B' },
+  // SELECT (INFO)
+  { id: 'SELECT', left: SELECT_L, top: SELECT_T, width: PILL_W, height: PILL_H, label: 'SEL' },
+  // START (RESTART)
+  { id: 'START', left: START_L, top: START_T, width: PILL_W, height: PILL_H, label: 'STA' },
 ];
 
-// Set to true to visualize touch zones for debugging
-const DEBUG_TOUCH_ZONES = false;
+// Set to true to show debug overlays
+const DEBUG = false;
+
+const defaultJoypad: JoypadState = {
+  UP: false, DOWN: false, LEFT: false, RIGHT: false,
+  A: false, B: false, SELECT: false, START: false,
+};
 
 export default function GameBoyShell() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const activeTouches = useRef<Map<number, keyof InputState>>(new Map());
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [errorMsg, setErrorMsg] = useState('');
+  const joypadRef = useRef<JoypadState>({ ...defaultJoypad });
+  const activeTouches = useRef<Map<number, keyof JoypadState | 'restart'>>(new Map());
 
-  // Initialize game engine
+  // ── WasmBoy initialization ──
   useEffect(() => {
-    if (!canvasRef.current || loaded) return;
-    
-    const initGame = async () => {
+    if (!canvasRef.current) return;
+    let cancelled = false;
+
+    const init = async () => {
       try {
-        await startGame(canvasRef.current!);
-        setLoaded(true);
-      } catch (err) {
-        console.error('Failed to start game:', err);
+        setStatus('loading');
+
+        await WasmBoy.config(
+          {
+            headless: false,
+            useGbcWhenOptional: false,
+            isAudioEnabled: true,
+            frameSkip: 1,
+            audioBatchProcessing: true,
+            timersBatchProcessing: false,
+            isAudioAccumulateSamples: true,
+            graphicsBatchProcessing: false,
+            graphicsDisableScanlineRendering: false,
+            tileRendering: true,
+            tileCaching: true,
+            gameboyFPSCap: 60,
+            updateGraphicsCallback: false,
+            updateAudioCallback: false,
+            saveStateCallback: false,
+          },
+          canvasRef.current!
+        );
+
+        if (cancelled) return;
+
+        await WasmBoy.loadROM(ROM_URL);
+
+        if (cancelled) return;
+
+        await WasmBoy.play();
+
+        // Disable WasmBoy's built-in ResponsiveGamepad so our custom input isn't overwritten each frame
+        WasmBoy.disableDefaultJoypad();
+
+        // Force canvas to fill container — WasmBoy resets inline style, so use MutationObserver
+        const enforceCanvasStyle = () => {
+          if (canvasRef.current) {
+            const el = canvasRef.current;
+            el.style.setProperty('position', 'absolute', 'important');
+            el.style.setProperty('top', '0', 'important');
+            el.style.setProperty('left', '0', 'important');
+            el.style.setProperty('width', '100%', 'important');
+            el.style.setProperty('height', '100%', 'important');
+            el.style.setProperty('display', 'block', 'important');
+          }
+        };
+        enforceCanvasStyle();
+
+        // Watch for WasmBoy resetting the style and re-apply
+        if (canvasRef.current) {
+          const observer = new MutationObserver(enforceCanvasStyle);
+          observer.observe(canvasRef.current, { attributes: true, attributeFilter: ['style'] });
+          // Store observer to disconnect on cleanup
+          (canvasRef.current as any).__styleObserver = observer;
+        }
+
+        if (!cancelled) setStatus('ready');
+      } catch (err: any) {
+        if (!cancelled) {
+          console.error('WasmBoy init error:', err);
+          setErrorMsg(err?.message || String(err));
+          setStatus('error');
+        }
       }
     };
 
-    initGame();
+    init();
 
     return () => {
-      stopGame();
+      cancelled = true;
+      WasmBoy.pause().catch(() => {});
     };
-  }, [imageLoaded]);
-
-  // Initialize keyboard input
-  useEffect(() => {
-    const cleanup = initKeyboardInput();
-    return cleanup;
   }, []);
 
-  // Touch handlers
+  // ── Push joypad state to WasmBoy ──
+  // setJoypadState is synchronous — do NOT call .catch() on it
+  const pushJoypad = useCallback(() => {
+    const s = joypadRef.current;
+    try {
+      WasmBoy.setJoypadState({
+        UP: s.UP, DOWN: s.DOWN, LEFT: s.LEFT, RIGHT: s.RIGHT,
+        A: s.A, B: s.B, SELECT: s.SELECT, START: s.START,
+      });
+    } catch (_) {}
+  }, []);
+
+  // ── Keyboard input ──
+  useEffect(() => {
+    const keyMap: Record<string, keyof JoypadState> = {
+      ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
+      z: 'A', Z: 'A', ' ': 'A',
+      x: 'B', X: 'B',
+      Enter: 'START',
+      Shift: 'SELECT',
+      a: 'LEFT', d: 'RIGHT', w: 'UP', s: 'DOWN',
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      const btn = keyMap[e.key];
+      if (btn) {
+        e.preventDefault();
+        if (!joypadRef.current[btn]) {
+          joypadRef.current[btn] = true;
+          pushJoypad();
+        }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      const btn = keyMap[e.key];
+      if (btn) {
+        e.preventDefault();
+        joypadRef.current[btn] = false;
+        pushJoypad();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [pushJoypad]);
+
+  // ── Touch zone helpers ──
   const findZone = useCallback((clientX: number, clientY: number): TouchZone | null => {
     const shell = shellRef.current;
     if (!shell) return null;
     const rect = shell.getBoundingClientRect();
     const xPct = ((clientX - rect.left) / rect.width) * 100;
     const yPct = ((clientY - rect.top) / rect.height) * 100;
-
     for (const zone of TOUCH_ZONES) {
       if (
-        xPct >= zone.left &&
-        xPct <= zone.left + zone.width &&
-        yPct >= zone.top &&
-        yPct <= zone.top + zone.height
+        xPct >= zone.left && xPct <= zone.left + zone.width &&
+        yPct >= zone.top && yPct <= zone.top + zone.height
       ) {
         return zone;
       }
@@ -193,81 +263,110 @@ export default function GameBoyShell() {
     return null;
   }, []);
 
+  const pressButton = useCallback((id: keyof JoypadState | 'restart') => {
+    if (id === 'restart') {
+      WasmBoy.reset().then(() => WasmBoy.play()).then(() => WasmBoy.disableDefaultJoypad()).catch((_: any) => {});
+      return;
+    }
+    joypadRef.current[id] = true;
+    pushJoypad();
+  }, [pushJoypad]);
+
+  const releaseButton = useCallback((id: keyof JoypadState | 'restart') => {
+    if (id === 'restart') return;
+    joypadRef.current[id] = false;
+    pushJoypad();
+  }, [pushJoypad]);
+
+  // ── Touch handlers ──
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      const zone = findZone(touch.clientX, touch.clientY);
+      const t = e.changedTouches[i];
+      const zone = findZone(t.clientX, t.clientY);
       if (zone) {
-        activeTouches.current.set(touch.identifier, zone.id);
-        setTouchInput(zone.id, true);
+        activeTouches.current.set(t.identifier, zone.id);
+        pressButton(zone.id);
       }
     }
-  }, [findZone]);
+  }, [findZone, pressButton]);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      const buttonId = activeTouches.current.get(touch.identifier);
-      if (buttonId) {
-        setTouchInput(buttonId, false);
-        activeTouches.current.delete(touch.identifier);
+      const t = e.changedTouches[i];
+      const id = activeTouches.current.get(t.identifier);
+      if (id !== undefined) {
+        releaseButton(id);
+        activeTouches.current.delete(t.identifier);
       }
     }
-  }, []);
+  }, [releaseButton]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
     for (let i = 0; i < e.changedTouches.length; i++) {
-      const touch = e.changedTouches[i];
-      const prevButton = activeTouches.current.get(touch.identifier);
-      const zone = findZone(touch.clientX, touch.clientY);
-
-      if (prevButton && (!zone || zone.id !== prevButton)) {
-        setTouchInput(prevButton, false);
-        activeTouches.current.delete(touch.identifier);
+      const t = e.changedTouches[i];
+      const prev = activeTouches.current.get(t.identifier);
+      const zone = findZone(t.clientX, t.clientY);
+      if (prev !== undefined && (!zone || zone.id !== prev)) {
+        releaseButton(prev);
+        activeTouches.current.delete(t.identifier);
       }
-
-      if (zone && zone.id !== prevButton) {
-        activeTouches.current.set(touch.identifier, zone.id);
-        setTouchInput(zone.id, true);
+      if (zone && zone.id !== prev) {
+        activeTouches.current.set(t.identifier, zone.id);
+        pressButton(zone.id);
       }
     }
-  }, [findZone]);
+  }, [findZone, pressButton, releaseButton]);
 
-  // Also handle mouse clicks for desktop testing of button zones
+  // ── Mouse handlers (desktop) ──
+  const mouseHeld = useRef<(keyof JoypadState) | null>(null);
+
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const zone = findZone(e.clientX, e.clientY);
     if (zone) {
-      setTouchInput(zone.id, true);
-      // Release after a short delay for one-shot buttons
-      if (zone.id === 'info' || zone.id === 'restart') {
-        setTimeout(() => setTouchInput(zone.id, false), 150);
+      if (zone.id === 'SELECT' || zone.id === 'START' || zone.id === 'restart') {
+        pressButton(zone.id);
+        setTimeout(() => releaseButton(zone.id), 300);
+      } else {
+        mouseHeld.current = zone.id as keyof JoypadState;
+        pressButton(zone.id);
       }
     }
-  }, [findZone]);
+  }, [findZone, pressButton, releaseButton]);
 
   const handleMouseUp = useCallback(() => {
-    // Release all non-oneshot buttons
-    const buttons: (keyof InputState)[] = ['left', 'right', 'up', 'down', 'jump', 'sprint'];
-    buttons.forEach(b => setTouchInput(b, false));
-  }, []);
+    if (mouseHeld.current) {
+      releaseButton(mouseHeld.current);
+      mouseHeld.current = null;
+    }
+  }, [releaseButton]);
 
   return (
     <div
       className="fixed inset-0 bg-black flex items-center justify-center overflow-hidden"
       style={{ touchAction: 'none' }}
     >
-      {/* Game Boy Shell Container */}
+      {/* Ambient glow */}
+      <div
+        className="fixed inset-0 pointer-events-none"
+        style={{
+          background: 'radial-gradient(ellipse at center, rgba(160,200,40,0.07) 0%, transparent 65%)',
+          zIndex: 0,
+        }}
+      />
+
+      {/* Game Boy Shell */}
       <div
         ref={shellRef}
         className="relative select-none"
         style={{
+          height: '100vh',
           maxHeight: '100vh',
           maxWidth: '100vw',
           aspectRatio: '944 / 2048',
-          height: '100vh',
+          zIndex: 1,
         }}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
@@ -277,16 +376,15 @@ export default function GameBoyShell() {
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
-        {/* Game Boy Skin Image */}
+        {/* Skin image */}
         <img
           src={SKIN_URL}
           alt="Game Box"
           className="w-full h-full object-contain pointer-events-none"
           draggable={false}
-          onLoad={() => setImageLoaded(true)}
         />
 
-        {/* Kaboom Canvas — positioned in the screen cutout */}
+        {/* Emulator canvas container */}
         <div
           className="absolute overflow-hidden"
           style={{
@@ -295,34 +393,73 @@ export default function GameBoyShell() {
             width: `${SCREEN.width}%`,
             height: `${SCREEN.height}%`,
             borderRadius: '2px',
+            // Stretch canvas to fill regardless of aspect ratio
+            display: 'flex',
           }}
         >
           <canvas
             ref={canvasRef}
             style={{
-              imageRendering: 'pixelated',
+              // Force stretch to fill container (override WasmBoy's inline style)
+              position: 'absolute',
+              top: 0,
+              left: 0,
               width: '100%',
               height: '100%',
               display: 'block',
-              objectFit: 'fill',
+              imageRendering: 'pixelated',
             }}
           />
+
+          {/* Loading overlay */}
+          {status === 'loading' && (
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center"
+              style={{ background: 'rgba(10,20,10,0.95)' }}
+            >
+              <div
+                style={{
+                  fontFamily: "'Press Start 2P', monospace",
+                  color: '#8bac0f',
+                  fontSize: 'clamp(5px, 1.2vw, 9px)',
+                  lineHeight: 2,
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: 'clamp(6px, 1.5vw, 11px)', marginBottom: '8px' }}>GAME BOX</div>
+                <div>LOADING...</div>
+                <div style={{ marginTop: '6px', opacity: 0.55, fontSize: 'clamp(4px, 0.9vw, 7px)' }}>
+                  SUPER MARIO BROS MINI
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Error overlay */}
+          {status === 'error' && (
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center p-2"
+              style={{ background: 'rgba(20,0,0,0.97)' }}
+            >
+              <div
+                style={{
+                  fontFamily: "'Press Start 2P', monospace",
+                  color: '#ff4444',
+                  fontSize: 'clamp(4px, 1vw, 7px)',
+                  lineHeight: 2,
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ marginBottom: '6px' }}>ERROR</div>
+                <div style={{ fontSize: 'clamp(3px, 0.8vw, 6px)', color: '#ff8888', wordBreak: 'break-all' }}>
+                  {errorMsg.slice(0, 80)}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Subtle screen glow effect */}
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            left: `${SCREEN.left - 0.5}%`,
-            top: `${SCREEN.top - 0.5}%`,
-            width: `${SCREEN.width + 1}%`,
-            height: `${SCREEN.height + 1}%`,
-            boxShadow: '0 0 15px 3px rgba(139, 172, 15, 0.12)',
-            borderRadius: '3px',
-          }}
-        />
-
-        {/* Scanline overlay for LCD effect */}
+        {/* Scanline overlay for LCD texture */}
         <div
           className="absolute pointer-events-none"
           style={{
@@ -333,23 +470,28 @@ export default function GameBoyShell() {
             background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.03) 1px, rgba(0,0,0,0.03) 2px)',
             zIndex: 5,
             borderRadius: '2px',
+            pointerEvents: 'none',
           }}
         />
 
-        {/* Debug: touch zone visualization */}
-        {DEBUG_TOUCH_ZONES && TOUCH_ZONES.map((zone, i) => (
+        {/* Debug overlays */}
+        {DEBUG && TOUCH_ZONES.map((zone, i) => (
           <div
             key={i}
-            className="absolute border-2 border-red-500 bg-red-500/20 flex items-center justify-center"
+            className="absolute flex items-center justify-center"
             style={{
               left: `${zone.left}%`,
               top: `${zone.top}%`,
               width: `${zone.width}%`,
               height: `${zone.height}%`,
-              zIndex: 10,
-              fontSize: '8px',
+              border: '2px solid rgba(255,80,80,0.8)',
+              background: 'rgba(255,0,0,0.18)',
+              zIndex: 20,
+              fontSize: '6px',
               color: 'red',
               fontWeight: 'bold',
+              fontFamily: 'monospace',
+              pointerEvents: 'none',
             }}
           >
             {zone.label}
@@ -357,37 +499,32 @@ export default function GameBoyShell() {
         ))}
       </div>
 
-      {/* Ambient glow behind the device */}
-      <div
-        className="fixed inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(ellipse at center, rgba(180, 210, 50, 0.04) 0%, transparent 60%)',
-          zIndex: -1,
-        }}
-      />
-
-      {/* Keyboard shortcut hint — fades after 3 seconds */}
+      {/* Keyboard hint — fades out after 5s */}
       <KeyboardHint />
     </div>
   );
 }
 
 function KeyboardHint() {
-  const [visible, setVisible] = useState(true);
+  const [opacity, setOpacity] = useState(1);
 
   useEffect(() => {
-    const timer = setTimeout(() => setVisible(false), 4000);
-    return () => clearTimeout(timer);
+    const t1 = setTimeout(() => setOpacity(0), 4000);
+    return () => clearTimeout(t1);
   }, []);
-
-  if (!visible) return null;
 
   return (
     <div
-      className="fixed bottom-4 left-1/2 -translate-x-1/2 text-white/40 text-xs font-mono z-50 transition-opacity duration-1000"
-      style={{ opacity: visible ? 1 : 0 }}
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-opacity duration-1000"
+      style={{
+        fontFamily: "'Space Mono', monospace",
+        fontSize: 'clamp(8px, 1.2vw, 11px)',
+        color: 'rgba(255,255,255,0.3)',
+        opacity,
+        whiteSpace: 'nowrap',
+      }}
     >
-      Arrows/WASD: Move | Space: Jump | Shift: Sprint | I: Info | R: Restart
+      Arrows: Move &nbsp;|&nbsp; Z/Space: A &nbsp;|&nbsp; X: B &nbsp;|&nbsp; Enter: Start &nbsp;|&nbsp; Shift: Select
     </div>
   );
 }

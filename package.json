@@ -46,6 +46,7 @@
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
     "framer-motion": "^12.23.22",
+    "gameboy-emulator": "^1.1.2",
     "input-otp": "^1.4.2",
     "kaboom": "3000.1.17",
     "lucide-react": "^0.453.0",
@@ -62,6 +63,7 @@
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^1.1.2",
+    "wasmboy": "^0.7.1",
     "wouter": "^3.3.5",
     "zod": "^4.1.12"
   },
