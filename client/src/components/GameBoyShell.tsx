@@ -24,9 +24,13 @@ const ROM_URL =
   'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
 
 // ── Screen area as % of skin image (944×2048) ──
-// Width: 82.2% of 944px = 776px. Game Boy is 160×144 (aspect 0.9).
-// Correct height: 776 * 0.9 / 2048 = 34.1%
-const SCREEN = { left: 8.8, top: 13.5, width: 82.2, height: 34.1 };
+// Measured from image analysis:
+//   Bezel: left=6.9%, top=12.3%, right=89.1%, bottom=50.7%
+//   Inner screen width: 79.8% of 944px = 753px
+//   Game Boy native: 160×144 (aspect 10:9)
+//   Inner screen height: 753px × 144/160 = 678px = 33.1% of 2048px
+//   Centered in bezel: left=8.1%, top=15.0%
+const SCREEN = { left: 8.1, top: 15.0, width: 79.8, height: 33.1 };
 
 // ── D-pad (center: 28.3%, 65.2%; bbox x=11.4-44.8%, y=57.7-77.9%) ──
 const DPAD_CX = 28.3, DPAD_CY = 65.2;
@@ -115,23 +119,28 @@ function useGameBoy(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
 
     (async () => {
       try {
-        await WasmBoy.config(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (WasmBoy as any).config(
           {
             headless: false,
-            useGbcWhenOptional: false,
-            isAudioEnabled: true,
-            frameSkip: 1,
+            // ROM is CGB ONLY — enable GBC mode (correct API key is isGbcEnabled)
+            isGbcEnabled: true,
+            isGbcColorizationEnabled: true,
+            // Disable audio to reduce lag on mobile
+            isAudioEnabled: false,
+            frameSkip: 0,
             audioBatchProcessing: true,
-            timersBatchProcessing: false,
-            isAudioAccumulateSamples: true,
+            timersBatchProcessing: true,
+            audioAccumulateSamples: true,
             graphicsBatchProcessing: false,
             graphicsDisableScanlineRendering: false,
             tileRendering: true,
             tileCaching: true,
-            gameboyFPSCap: 60,
-            updateGraphicsCallback: false,
-            updateAudioCallback: false,
-            saveStateCallback: false,
+            gameboyFrameRate: 60,
+            disablePauseOnHidden: true,  // Don't pause when tab is hidden
+            updateGraphicsCallback: null,
+            updateAudioCallback: null,
+            saveStateCallback: null,
           },
           canvasRef.current!
         );
@@ -325,9 +334,13 @@ export default function GameBoyShell() {
 
   const handleStart = useCallback(() => {
     dismissStart();
-    // Two START presses: first shows title screen, second begins the game
-    tap('START', 250);
-    setTimeout(() => tap('START', 250), 600);
+    // Multiple START presses to navigate through title screens
+    // Press 1: dismiss any intro screen
+    tap('START', 200);
+    // Press 2: select 1 player game
+    setTimeout(() => tap('START', 200), 500);
+    // Press 3: confirm / skip any additional screen
+    setTimeout(() => tap('START', 200), 1000);
   }, [tap, dismissStart]);
 
   const handleRestart = useCallback(() => {
@@ -348,7 +361,7 @@ export default function GameBoyShell() {
           overflow: hidden; 
           overscroll-behavior: none;
           height: 100%;
-          background: #000;
+          background: #7B2FBE;
         }
         @keyframes blink {
           0%, 100% { opacity: 1; }
@@ -360,7 +373,7 @@ export default function GameBoyShell() {
         style={{
           position: 'fixed',
           inset: 0,
-          background: '#000',
+          background: '#7B2FBE',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -370,31 +383,35 @@ export default function GameBoyShell() {
           touchAction: 'none',
         }}
       >
-        {/* Ambient lime glow */}
+        {/* Subtle purple vignette */}
         <div style={{
           position: 'fixed', inset: 0, pointerEvents: 'none',
-          background: 'radial-gradient(ellipse at center, rgba(160,200,40,0.07) 0%, transparent 65%)',
+          background: 'radial-gradient(ellipse at center, rgba(140,60,220,0.3) 0%, rgba(80,10,140,0.6) 100%)',
           zIndex: 0,
         }} />
 
         {/* ── Game Boy Shell ── */}
         {/* 
-          Skin is 944×2048 (aspect ~0.461).
-          We want it to fit within the viewport with some padding.
-          Use max-height: 96dvh so buttons are always visible.
+          Skin is 944×2048 (aspect 944/2048 = 0.4609).
+          Use aspect-ratio to maintain perfect proportions.
+          Constrain by both viewport dimensions.
         */}
         <div
           style={{
             position: 'relative',
             userSelect: 'none',
             WebkitUserSelect: 'none',
-            // Fit height first, then constrain width
-            height: 'min(96dvh, calc(100vw / 0.461))',
-            width: 'min(calc(96dvh * 0.461), 100vw)',
-            maxHeight: '96dvh',
-            maxWidth: '100vw',
+            // aspect-ratio ensures perfect proportional scaling
+            aspectRatio: '944 / 2048',
+            // Fit within viewport: constrain by height (most limiting on phones)
+            // Use 95% to ensure the full shell is always visible
+            height: 'min(95dvh, calc(95vw * 2048 / 944))',
+            width: 'min(calc(95dvh * 944 / 2048), 95vw)',
+            maxHeight: '95dvh',
+            maxWidth: '95vw',
             zIndex: 1,
             touchAction: 'none',
+            flexShrink: 0,
           }}
         >
           {/* Skin image */}
