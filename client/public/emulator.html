@@ -16,7 +16,9 @@
       width: 100%; height: 100%;
       background: #000 !important;
     }
-    /* ── Hide ALL EJS chrome: toolbar, menus, loading text, start button ── */
+
+    /* ── NUCLEAR: Hide every EJS UI element except the canvas ── */
+    /* Loading text, start button, toolbar, menus */
     .ejs_menu_bar,
     .ejs_start_button,
     .ejs_start_button_border,
@@ -28,25 +30,40 @@
     .ejs_netplay,
     .ejs_ad_container,
     .ejs_ad_close,
-    .ejs_ad_iframe,
-    .ejs_virtual,
-    .ejs_dpad_main,
-    .ejs_dpad_bar,
-    .ejs_dpad_horizontal,
-    .ejs_dpad_vertical {
+    .ejs_ad_iframe {
       display: none !important;
       visibility: hidden !important;
       opacity: 0 !important;
       pointer-events: none !important;
     }
-    /* Force black background on EJS parent to prevent white flash */
+
+    /* ── CRITICAL: Hide EJS virtual gamepad (the white overlay on mobile) ── */
+    /* Class name confirmed from EJS source: ejs_virtualGamepad_parent */
+    .ejs_virtual,
+    .ejs_virtualGamepad_parent,
+    [class*="ejs_virtual"],
+    [class*="ejs_dpad"],
+    [class*="ejs_button_button"],
+    .ejs_dpad_main,
+    .ejs_dpad_bar,
+    .ejs_dpad_horizontal,
+    .ejs_dpad_vertical,
+    #ejs_virtualGamepad_parent {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+
+    /* Force black background on all EJS containers */
     .ejs_parent,
     .ejs_game,
     .ejs_game_background,
     .ejs_canvas_parent {
       background: #000 !important;
     }
-    /* Make canvas fill the container perfectly */
+
+    /* Canvas fills the container */
     .ejs_canvas,
     #game canvas {
       position: absolute !important;
@@ -58,6 +75,7 @@
       image-rendering: crisp-edges;
     }
   </style>
+
   <!-- Set ALL globals BEFORE loader.js runs -->
   <script>
     window.EJS_player = '#game';
@@ -76,6 +94,29 @@
     window.EJS_saveStateOnExit = null;
     window.EJS_cheats = [];
     window.EJS_volume = 0.5;
+
+    // Intercept touch detection: prevent EJS from knowing it's a touch device
+    // This stops EJS from showing the virtual gamepad
+    window.EJS_onGameStart = function() {
+      try {
+        var emu = window.EJS_emulator;
+        if (emu) {
+          // Force touch=false so virtual gamepad never shows
+          emu.touch = false;
+          // If toggleVirtualGamepad exists, hide it
+          if (typeof emu.toggleVirtualGamepad === 'function') {
+            emu.toggleVirtualGamepad(false);
+          }
+          // Also hide the virtualGamepad element directly
+          if (emu.virtualGamepad) {
+            emu.virtualGamepad.style.display = 'none';
+            emu.virtualGamepad.style.visibility = 'hidden';
+          }
+        }
+      } catch(e) {
+        console.warn('Could not suppress virtual gamepad:', e);
+      }
+    };
   </script>
 </head>
 <body>
@@ -83,9 +124,8 @@
   <script src="/ejs/loader.js"></script>
   <script>
     // ── GB button IDs for simulateInput(player, buttonId, value) ──
-    // These match EmulatorJS's defaultControllers for the 'gb' core:
-    //   0=B, 2=SELECT, 3=START, 4=UP, 5=DOWN, 6=LEFT, 7=RIGHT, 8=A
-    const BTN_IDS = {
+    // 0=B, 2=SELECT, 3=START, 4=UP, 5=DOWN, 6=LEFT, 7=RIGHT, 8=A
+    var BTN_IDS = {
       B:      0,
       SELECT: 2,
       START:  3,
@@ -97,11 +137,11 @@
     };
 
     function pressButton(btn, pressed) {
-      const id = BTN_IDS[btn];
+      var id = BTN_IDS[btn];
       if (id === undefined) return;
-      const emu = window.EJS_emulator;
+      var emu = window.EJS_emulator;
       if (!emu || !emu.gameManager) return;
-      const value = pressed ? 1 : 0;
+      var value = pressed ? 1 : 0;
       try {
         emu.gameManager.simulateInput(0, id, value);
       } catch(e) {
@@ -113,19 +153,15 @@
     window.addEventListener('message', function(e) {
       if (!e.data) return;
 
-      // Button press/release: { type: 'gamekey', btn: 'A', eventType: 'keydown'|'keyup' }
       if (e.data.type === 'gamekey') {
         pressButton(e.data.btn, e.data.eventType === 'keydown');
         return;
       }
 
-      // Restart: { type: 'restart' } — uses EJS API, NOT location.reload()
       if (e.data.type === 'restart') {
         try {
-          const emu = window.EJS_emulator;
-          if (emu && typeof emu.restart === 'function') {
-            emu.restart();
-          } else if (emu && emu.gameManager && typeof emu.gameManager.restart === 'function') {
+          var emu = window.EJS_emulator;
+          if (emu && emu.gameManager && typeof emu.gameManager.restart === 'function') {
             emu.gameManager.restart();
           }
         } catch(err) {
@@ -134,60 +170,74 @@
         return;
       }
 
-      // Pause toggle: { type: 'pause' }
       if (e.data.type === 'pause') {
         try {
-          const emu = window.EJS_emulator;
-          if (emu) emu.togglePause();
+          var emu = window.EJS_emulator;
+          if (emu && typeof emu.togglePause === 'function') emu.togglePause();
         } catch(err) {}
         return;
       }
     });
 
-    // Notify parent when game is ready (emulator started)
-    // Also hide any remaining loading text elements
+    // Poll until game is ready, then notify parent and suppress virtual gamepad
     function checkReady() {
-      const emu = window.EJS_emulator;
+      var emu = window.EJS_emulator;
 
-      // Continuously hide loading text while waiting
-      document.querySelectorAll('.ejs_loading_text, .ejs_start_button, .ejs_menu_bar').forEach(function(el) {
+      // Always hide EJS UI elements while polling
+      document.querySelectorAll(
+        '.ejs_loading_text, .ejs_start_button, .ejs_menu_bar, ' +
+        '.ejs_virtualGamepad_parent, .ejs_virtual, .ejs_dpad_main'
+      ).forEach(function(el) {
         el.style.display = 'none';
         el.style.visibility = 'hidden';
-        el.style.opacity = '0';
       });
 
       if (emu && emu.started) {
+        // Suppress virtual gamepad
+        try {
+          emu.touch = false;
+          if (typeof emu.toggleVirtualGamepad === 'function') {
+            emu.toggleVirtualGamepad(false);
+          }
+          if (emu.virtualGamepad) {
+            emu.virtualGamepad.style.display = 'none';
+            emu.virtualGamepad.style.visibility = 'hidden';
+            emu.virtualGamepad.style.pointerEvents = 'none';
+          }
+        } catch(e) {}
+
         window.parent.postMessage({ type: 'gameReady' }, '*');
         return;
       }
       setTimeout(checkReady, 300);
     }
-    // Start polling after a short delay to let EJS initialize
     setTimeout(checkReady, 800);
 
-    // Also use MutationObserver to hide elements as they're added
+    // MutationObserver to hide elements as they're added to the DOM
     var observer = new MutationObserver(function(mutations) {
       mutations.forEach(function(mutation) {
         mutation.addedNodes.forEach(function(node) {
-          if (node.nodeType === 1) {
-            var classesToHide = [
-              'ejs_loading_text', 'ejs_start_button', 'ejs_menu_bar',
-              'ejs_context_menu', 'ejs_popup_container', 'ejs_virtual',
-              'ejs_dpad_main', 'ejs_ad_container'
-            ];
-            classesToHide.forEach(function(cls) {
-              if (node.classList && node.classList.contains(cls)) {
-                node.style.display = 'none';
-                node.style.visibility = 'hidden';
-              }
-              if (node.querySelectorAll) {
-                node.querySelectorAll('.' + cls).forEach(function(el) {
-                  el.style.display = 'none';
-                  el.style.visibility = 'hidden';
-                });
-              }
-            });
-          }
+          if (node.nodeType !== 1) return;
+          var classesToHide = [
+            'ejs_loading_text', 'ejs_start_button', 'ejs_menu_bar',
+            'ejs_context_menu', 'ejs_popup_container',
+            'ejs_virtualGamepad_parent', 'ejs_virtual',
+            'ejs_dpad_main', 'ejs_ad_container'
+          ];
+          classesToHide.forEach(function(cls) {
+            if (node.classList && node.classList.contains(cls)) {
+              node.style.display = 'none';
+              node.style.visibility = 'hidden';
+              node.style.pointerEvents = 'none';
+            }
+            if (node.querySelectorAll) {
+              node.querySelectorAll('.' + cls).forEach(function(el) {
+                el.style.display = 'none';
+                el.style.visibility = 'hidden';
+                el.style.pointerEvents = 'none';
+              });
+            }
+          });
         });
       });
     });

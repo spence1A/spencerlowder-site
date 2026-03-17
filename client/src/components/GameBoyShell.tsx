@@ -5,42 +5,40 @@
  * - emulator.html is served as a static page that initializes EmulatorJS
  * - The iframe is positioned exactly over the LCD bezel of the skin image
  * - Touch/keyboard controls are forwarded to the iframe via postMessage
- * - The iframe hides EJS chrome (toolbar, menus) — only the canvas is visible
+ * - The iframe hides ALL EJS chrome including the virtual gamepad
  *
- * Screen overlay (exact bezel bounds from pixel-accurate image analysis of 944×2048 skin):
- *   left=6.9%, top=12.3%, width=82.2%, height=38.4%
- *
- * Background purple: #8C0CE0 (sampled from image border pixels)
+ * Skin: gameboxwiderbackgroundwithdropshadow.webp  (1011×2048px, RGBA with drop shadow)
+ * Inner LCD screen bounds (pixel-accurate from image analysis):
+ *   left=13.16%, top=14.40%, width=74.18%, height=34.52%
+ *   (inner boundary of the black bezel, where game canvas should render)
  */
 
 import { useRef, useEffect, useCallback, useState } from 'react';
 
 const SKIN_URL =
-  'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboy-skin_288fe3ff.png';
+  'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboxwiderbackgroundwithdropshadow_46e5266c.webp';
 
 // ── Screen area: inner LCD display bounds (pixel-accurate from image analysis) ──
-// Skin: 944×2048px  |  Outer bezel: left=6.9%, top=12.3%, right=89.1%, bottom=50.8%
-// Inner LCD: left=11.5%, top=14.5%, right=89.0%, bottom=48.9%
-const SCREEN = { left: 11.5, top: 14.5, width: 77.5, height: 34.4 };
+// Skin: 1011×2048px  |  Inner LCD: left=13.16%, top=14.40%, right=87.34%, bottom=48.93%
+const SCREEN = { left: 13.16, top: 14.40, width: 74.18, height: 34.52 };
 
-// ── D-pad (center: 28.3%, 65.2%) ──
-const DPAD_CX = 28.3, DPAD_CY = 65.2;
+// ── D-pad (center measured from new wider skin) ──
+// D-pad center is at approximately x=230/1011=22.7%, y=1330/2048=65.0%
+const DPAD_CX = 22.7, DPAD_CY = 65.0;
 const DPAD_ARM_W = 8, DPAD_ARM_H = 6;
 
-// ── A / B buttons ──
-const A_CX = 82.4, A_CY = 62.7, A_R = 6.5;
-const B_CX = 61.8, B_CY = 67.8, B_R = 5.5;
+// ── A / B buttons (measured from wider skin) ──
+// A button: x=815/1011=80.6%, y=1290/2048=63.0%
+// B button: x=600/1011=59.3%, y=1360/2048=66.4%
+const A_CX = 80.6, A_CY = 63.0, A_R = 6.5;
+const B_CX = 59.3, B_CY = 66.4, B_R = 5.5;
 
 // ── Pills (SELECT=INFO pill, START=RESTART pill) ──
-// Pixel-accurate from image: INFO pill center ~x=370 (39.2%), y=1810 (88.4%)
-//                            RESTART pill center ~x=510 (54.0%), y=1810 (88.4%)
-const PILL_W = 14, PILL_H = 4.5;
-const SELECT_L = 32.0, SELECT_T = 86.2;  // INFO pill
-const START_L  = 46.5, START_T  = 86.2;  // RESTART pill
-
-// ── INFO / RESTART labels (same pills, larger tap zone) ──
-const INFO_L = 32.0, INFO_T = 86.2;
-const RESTART_L = 46.5, RESTART_T = 86.2;
+// INFO pill center: x=412/1011=40.8%, y=1820/2048=88.9%
+// RESTART pill center: x=560/1011=55.4%, y=1820/2048=88.9%
+const PILL_W = 13, PILL_H = 4.5;
+const SELECT_L = 33.8, SELECT_T = 86.9;  // INFO pill
+const START_L  = 48.4, START_T  = 86.9;  // RESTART pill
 
 const DEBUG = false;
 
@@ -192,9 +190,9 @@ export default function GameBoyShell() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
-  // Fallback: hide loading overlay after 15 seconds regardless
+  // Fallback: hide loading overlay after 20 seconds regardless
   useEffect(() => {
-    const t = setTimeout(() => setGameReady(true), 15000);
+    const t = setTimeout(() => setGameReady(true), 20000);
     return () => clearTimeout(t);
   }, []);
 
@@ -237,7 +235,7 @@ export default function GameBoyShell() {
           overflow: hidden;
           overscroll-behavior: none;
           height: 100%;
-          background: #8C0CE0;
+          background: transparent;
           margin: 0;
           padding: 0;
         }
@@ -248,7 +246,7 @@ export default function GameBoyShell() {
         style={{
           position: 'fixed',
           inset: 0,
-          background: '#8C0CE0',
+          background: 'transparent',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -257,22 +255,16 @@ export default function GameBoyShell() {
           touchAction: 'none',
         }}
       >
-        {/* Radial vignette */}
-        <div style={{
-          position: 'fixed', inset: 0, pointerEvents: 'none',
-          background: 'radial-gradient(ellipse at center, rgba(160,40,255,0.25) 0%, rgba(60,0,120,0.55) 100%)',
-          zIndex: 0,
-        }} />
-
         {/* ── Game Boy Shell ── */}
         <div
           style={{
             position: 'relative',
             userSelect: 'none',
             WebkitUserSelect: 'none',
-            aspectRatio: '944 / 2048',
-            height: 'min(95dvh, calc(95vw * 2048 / 944))',
-            width: 'min(calc(95dvh * 944 / 2048), 95vw)',
+            // New skin: 1011×2048px
+            aspectRatio: '1011 / 2048',
+            height: 'min(95dvh, calc(95vw * 2048 / 1011))',
+            width: 'min(calc(95dvh * 1011 / 2048), 95vw)',
             maxHeight: '95dvh',
             maxWidth: '95vw',
             zIndex: 1,
@@ -280,7 +272,7 @@ export default function GameBoyShell() {
             flexShrink: 0,
           }}
         >
-          {/* Skin image */}
+          {/* Skin image — RGBA with drop shadow, transparent background */}
           <img
             src={SKIN_URL}
             alt="Game Box"
@@ -323,7 +315,7 @@ export default function GameBoyShell() {
           )}
 
           {/* ── EmulatorJS iframe — positioned over the inner LCD screen ── */}
-          {/* Inner LCD: left=11.5%, top=14.5%, width=77.5%, height=34.4% */}
+          {/* Inner LCD: left=13.16%, top=14.40%, width=74.18%, height=34.52% */}
           <iframe
             ref={iframeRef}
             src="/emulator.html"
@@ -337,7 +329,6 @@ export default function GameBoyShell() {
               display: 'block',
               zIndex: gameReady ? 4 : 3,
               background: '#000',
-              // Allow pointer events so EJS can receive focus for audio context
               pointerEvents: 'none',
             }}
             allow="autoplay"
@@ -393,26 +384,15 @@ export default function GameBoyShell() {
             onPress={() => pressBtn('B')}
             onRelease={() => releaseBtn('B')} />
 
-          {/* SELECT pill */}
+          {/* SELECT pill (INFO) — sends SELECT game button */}
           <ButtonZone label="SEL"
             style={{ ...pct(SELECT_L, SELECT_T, PILL_W, PILL_H), borderRadius: '99px' }}
             onPress={() => tapBtn('SELECT', 150)}
             onRelease={() => {}} isTap />
 
-          {/* START pill */}
-          <ButtonZone label="STA"
-            style={{ ...pct(START_L, START_T, PILL_W, PILL_H), borderRadius: '99px' }}
-            onPress={() => tapBtn('START', 150)}
-            onRelease={() => {}} isTap />
-
-          {/* INFO pill — show keyboard hint */}
-          <ButtonZone label="NFO"
-            style={{ ...pct(INFO_L, INFO_T, PILL_W, PILL_H), borderRadius: '99px' }}
-            onPress={() => {}} onRelease={() => {}} isTap />
-
-          {/* RESTART pill — uses EJS restart API, not page reload */}
+          {/* RESTART pill — restarts the game via EJS API */}
           <ButtonZone label="RST"
-            style={{ ...pct(RESTART_L, RESTART_T, PILL_W, PILL_H), borderRadius: '99px' }}
+            style={{ ...pct(START_L, START_T, PILL_W, PILL_H), borderRadius: '99px' }}
             onPress={() => restartGame()}
             onRelease={() => {}} isTap />
 
