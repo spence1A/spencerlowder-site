@@ -295,7 +295,7 @@ export default function GameBoyShell() {
               width: `${SCREEN.width}%`, height: `${SCREEN.height}%`,
               display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              background: '#0a140a', zIndex: 6,
+              background: '#0a140a', zIndex: 7,
               borderRadius: '2px',
               pointerEvents: 'none',
             }}>
@@ -318,7 +318,7 @@ export default function GameBoyShell() {
           {/* Inner LCD: left=13.16%, top=14.40%, width=74.18%, height=34.52% */}
           <iframe
             ref={iframeRef}
-            src="/emulator.html"
+            src="/emulator.html?v=20260317"
             style={{
               position: 'absolute',
               left: `${SCREEN.left}%`,
@@ -327,9 +327,11 @@ export default function GameBoyShell() {
               height: `${SCREEN.height}%`,
               border: 'none',
               display: 'block',
-              zIndex: gameReady ? 4 : 3,
+              zIndex: 4,
               background: '#000',
               pointerEvents: 'none',
+              // Keep iframe below loading overlay until ready
+              opacity: gameReady ? 1 : 0,
             }}
             allow="autoplay"
             title="Game Boy Emulator"
