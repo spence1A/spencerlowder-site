@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game</title>
+  <link rel="stylesheet" href="/ejs/emulator.min.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    #game {
+      width: 100%; height: 100%;
+    }
+    /* Hide EJS toolbar and UI chrome — we only want the canvas */
+    .ejs_menu_bar,
+    .ejs_start_button,
+    .ejs_context_menu,
+    .ejs_popup_container {
+      display: none !important;
+    }
+    /* Make canvas fill the container */
+    #game canvas {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    /* Hide the EJS loading screen — we show our own */
+    .ejs_loading {
+      display: none !important;
+    }
+  </style>
+  <!-- Set ALL globals BEFORE loader.js runs -->
+  <script>
+    window.EJS_player = '#game';
+    window.EJS_core = 'gb';
+    window.EJS_gameUrl = 'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
+    window.EJS_pathtodata = '/ejs/';
+    window.EJS_color = '#8C0CE0';
+    window.EJS_startOnLoaded = true;
+    window.EJS_disableLocalStorage = true;
+    window.EJS_gameName = 'Super Mario Bros Mini';
+    window.EJS_disableAutoLang = false;
+    window.EJS_paths = {
+      'en-US': '/ejs/localization/en-US.json',
+    };
+  </script>
+</head>
+<body>
+  <div id="game"></div>
+  <script src="/ejs/loader.js"></script>
+
+  <!-- Forward key events from parent frame -->
+  <script>
+    window.addEventListener('message', function(e) {
+      if (!e.data || e.data.type !== 'gamekey') return;
+      var key = e.data.key;
+      var eventType = e.data.eventType;
+      var target = document.querySelector('#game canvas') || document.getElementById('game');
+      var event = new KeyboardEvent(eventType, {
+        key: key,
+        code: key,
+        keyCode: e.data.keyCode || 0,
+        which: e.data.keyCode || 0,
+        bubbles: true,
+        cancelable: true,
+      });
+      (target || document).dispatchEvent(event);
+    });
+  </script>
+</body>
+</html>

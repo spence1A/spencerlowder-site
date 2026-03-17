@@ -1,216 +1,56 @@
 /**
- * GameBoyShell — iOS Safari compatible version
+ * GameBoyShell — EmulatorJS (Gambatte/GBC core) in an iframe
  *
- * Key changes from previous version:
- * - Uses Pointer Events API (onPointerDown/onPointerUp) instead of Touch Events
- *   → Works on iOS Safari, Chrome, Firefox, desktop — all in one
- * - Uses 100dvh (dynamic viewport height) to account for Safari browser chrome
- * - Device scales down to fit within viewport including bottom bar
- * - pointerCapture on each button so drag-off still releases correctly
- * - No preventDefault() calls that Safari blocks in passive listeners
- * - WasmBoy default joypad disabled to prevent frame-by-frame override
+ * Architecture:
+ * - emulator.html is served as a static page that initializes EmulatorJS
+ * - The iframe is positioned exactly over the LCD bezel of the skin image
+ * - Touch/keyboard controls are forwarded to the iframe via postMessage
+ * - The iframe hides EJS chrome (toolbar, menus) — only the canvas is visible
  *
- * Skin image: 944 × 2048 px
- * Screen (inner LCD): left=8.8% top=13.5% width=82.2% height=36%
+ * Screen overlay (exact bezel bounds from pixel-accurate image analysis of 944×2048 skin):
+ *   left=6.9%, top=12.3%, width=82.2%, height=38.4%
+ *
+ * Background purple: #8C0CE0 (sampled from image border pixels)
  */
 
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { WasmBoy } from 'wasmboy';
 
 const SKIN_URL =
   'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboy-skin_288fe3ff.png';
 
-const ROM_URL =
-  'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
+// ── Screen area: exact bezel bounds from pixel-accurate image analysis ──
+// Skin: 944×2048px  |  Bezel: left=6.9%, top=12.3%, right=89.1%, bottom=50.7%
+const SCREEN = { left: 6.9, top: 12.3, width: 82.2, height: 38.4 };
 
-// ── Screen area as % of skin image (944×2048) ──
-// Measured from image analysis:
-//   Bezel: left=6.9%, top=12.3%, right=89.1%, bottom=50.7%
-//   Inner screen width: 79.8% of 944px = 753px
-//   Game Boy native: 160×144 (aspect 10:9)
-//   Inner screen height: 753px × 144/160 = 678px = 33.1% of 2048px
-//   Centered in bezel: left=8.1%, top=15.0%
-const SCREEN = { left: 8.1, top: 15.0, width: 79.8, height: 33.1 };
-
-// ── D-pad (center: 28.3%, 65.2%; bbox x=11.4-44.8%, y=57.7-77.9%) ──
+// ── D-pad (center: 28.3%, 65.2%) ──
 const DPAD_CX = 28.3, DPAD_CY = 65.2;
 const DPAD_ARM_W = 8, DPAD_ARM_H = 6;
 
-// ── A / B (pixel-accurate from image analysis) ──
-// A center: 82.4%, 62.7%
+// ── A / B buttons ──
 const A_CX = 82.4, A_CY = 62.7, A_R = 6.5;
-// B center: 61.8%, 67.8%
 const B_CX = 61.8, B_CY = 67.8, B_R = 5.5;
 
-// ── Pills (pixel-accurate from image analysis) ──
+// ── Pills ──
 const PILL_W = 12, PILL_H = 5;
-// INFO pill center: 37.4%, 89.5%
 const SELECT_L = 31.4, SELECT_T = 87;
-// RESTART pill center: 53.0%, 88.8%
-const START_L  = 47, START_T  = 86.3;
+const START_L  = 47,   START_T  = 86.3;
 
 const DEBUG = false;
 
-interface JoypadState {
-  UP: boolean; DOWN: boolean; LEFT: boolean; RIGHT: boolean;
-  A: boolean; B: boolean; SELECT: boolean; START: boolean;
-}
-
-const defaultJoypad: JoypadState = {
-  UP: false, DOWN: false, LEFT: false, RIGHT: false,
-  A: false, B: false, SELECT: false, START: false,
+// EJS key names for the GB core
+const BTN_TO_KEY: Record<string, { key: string; keyCode: number }> = {
+  UP:     { key: 'ArrowUp',    keyCode: 38 },
+  DOWN:   { key: 'ArrowDown',  keyCode: 40 },
+  LEFT:   { key: 'ArrowLeft',  keyCode: 37 },
+  RIGHT:  { key: 'ArrowRight', keyCode: 39 },
+  A:      { key: 'x',          keyCode: 88 },
+  B:      { key: 's',          keyCode: 83 },
+  START:  { key: 'Enter',      keyCode: 13 },
+  SELECT: { key: 'v',          keyCode: 86 },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WasmBoy hook
-// ─────────────────────────────────────────────────────────────────────────────
-function useGameBoy(canvasRef: React.RefObject<HTMLCanvasElement | null>) {
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [errorMsg, setErrorMsg] = useState('');
-  const joypadRef = useRef<JoypadState>({ ...defaultJoypad });
-
-  const pushJoypad = useCallback(() => {
-    const s = joypadRef.current;
-    try {
-      WasmBoy.setJoypadState({
-        UP: s.UP, DOWN: s.DOWN, LEFT: s.LEFT, RIGHT: s.RIGHT,
-        A: s.A, B: s.B, SELECT: s.SELECT, START: s.START,
-      });
-    } catch (_) {}
-  }, []);
-
-  // Continuously push joypad state every frame so WasmBoy can't override it
-  useEffect(() => {
-    let rafId: number;
-    const loop = () => {
-      pushJoypad();
-      rafId = requestAnimationFrame(loop);
-    };
-    rafId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafId);
-  }, [pushJoypad]);
-
-  const press = useCallback((btn: keyof JoypadState) => {
-    joypadRef.current[btn] = true;
-    pushJoypad();
-  }, [pushJoypad]);
-
-  const release = useCallback((btn: keyof JoypadState) => {
-    joypadRef.current[btn] = false;
-    pushJoypad();
-  }, [pushJoypad]);
-
-  const tap = useCallback((btn: keyof JoypadState, ms = 200) => {
-    press(btn);
-    setTimeout(() => release(btn), ms);
-  }, [press, release]);
-
-  const restart = useCallback(() => {
-    WasmBoy.reset()
-      .then(() => WasmBoy.play())
-      .then(() => { try { WasmBoy.disableDefaultJoypad(); } catch (_) {} })
-      .catch(() => {});
-  }, []);
-
-  // ── Init ──
-  useEffect(() => {
-    if (!canvasRef.current) return;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (WasmBoy as any).config(
-          {
-            headless: false,
-            // ROM is CGB ONLY — enable GBC mode (correct API key is isGbcEnabled)
-            isGbcEnabled: true,
-            isGbcColorizationEnabled: true,
-            // Disable audio to reduce lag on mobile
-            isAudioEnabled: false,
-            frameSkip: 0,
-            audioBatchProcessing: true,
-            timersBatchProcessing: true,
-            audioAccumulateSamples: true,
-            graphicsBatchProcessing: false,
-            graphicsDisableScanlineRendering: false,
-            tileRendering: true,
-            tileCaching: true,
-            gameboyFrameRate: 60,
-            disablePauseOnHidden: true,  // Don't pause when tab is hidden
-            updateGraphicsCallback: null,
-            updateAudioCallback: null,
-            saveStateCallback: null,
-          },
-          canvasRef.current!
-        );
-        if (cancelled) return;
-
-        await WasmBoy.loadROM(ROM_URL);
-        if (cancelled) return;
-
-        await WasmBoy.play();
-        try { WasmBoy.disableDefaultJoypad(); } catch (_) {}
-
-        // Force canvas to fill container — WasmBoy resets inline style
-        const enforceCanvasStyle = () => {
-          const el = canvasRef.current;
-          if (!el) return;
-          el.style.setProperty('position', 'absolute', 'important');
-          el.style.setProperty('top', '0', 'important');
-          el.style.setProperty('left', '0', 'important');
-          el.style.setProperty('width', '100%', 'important');
-          el.style.setProperty('height', '100%', 'important');
-          el.style.setProperty('display', 'block', 'important');
-          el.style.setProperty('pointer-events', 'none', 'important');
-        };
-        enforceCanvasStyle();
-        const obs = new MutationObserver(enforceCanvasStyle);
-        obs.observe(canvasRef.current!, { attributes: true, attributeFilter: ['style'] });
-
-        if (!cancelled) setStatus('ready');
-      } catch (err: any) {
-        if (!cancelled) {
-          setErrorMsg(err?.message ?? String(err));
-          setStatus('error');
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      WasmBoy.pause().catch(() => {});
-    };
-  }, [canvasRef]);
-
-  // ── Keyboard (desktop) ──
-  useEffect(() => {
-    const map: Record<string, keyof JoypadState> = {
-      ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
-      z: 'A', Z: 'A', ' ': 'A',
-      x: 'B', X: 'B',
-      Enter: 'START',
-      Shift: 'SELECT',
-      a: 'LEFT', d: 'RIGHT', w: 'UP', s: 'DOWN',
-    };
-    const down = (e: KeyboardEvent) => {
-      const btn = map[e.key];
-      if (btn) { e.preventDefault(); if (!joypadRef.current[btn]) press(btn); }
-    };
-    const up = (e: KeyboardEvent) => {
-      const btn = map[e.key];
-      if (btn) { e.preventDefault(); release(btn); }
-    };
-    window.addEventListener('keydown', down);
-    window.addEventListener('keyup', up);
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [press, release]);
-
-  return { status, errorMsg, press, release, tap, restart };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ButtonZone — uses native touch events (passive:false) for iOS Safari
+// ButtonZone — native touch events (passive:false) for iOS Safari
 // ─────────────────────────────────────────────────────────────────────────────
 interface BtnProps {
   style: React.CSSProperties;
@@ -222,7 +62,6 @@ interface BtnProps {
 
 function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProps) {
   const divRef = useRef<HTMLDivElement>(null);
-  // Use stable refs so the effect doesn't re-run on every render
   const onPressRef = useRef(onPress);
   const onReleaseRef = useRef(onRelease);
   onPressRef.current = onPress;
@@ -235,7 +74,7 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
     const activeTouches = new Set<number>();
 
     const handleTouchStart = (e: TouchEvent) => {
-      e.preventDefault(); // Prevent scroll / zoom on iOS
+      e.preventDefault();
       e.stopPropagation();
       const wasEmpty = activeTouches.size === 0;
       for (let i = 0; i < e.changedTouches.length; i++) {
@@ -255,9 +94,7 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
       for (let i = 0; i < e.changedTouches.length; i++) {
         activeTouches.delete(e.changedTouches[i].identifier);
       }
-      if (!isTap && activeTouches.size === 0) {
-        onReleaseRef.current();
-      }
+      if (!isTap && activeTouches.size === 0) onReleaseRef.current();
     };
 
     const handleTouchCancel = (e: TouchEvent) => {
@@ -265,18 +102,17 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
       for (let i = 0; i < e.changedTouches.length; i++) {
         activeTouches.delete(e.changedTouches[i].identifier);
       }
-      if (!isTap && activeTouches.size === 0) {
-        onReleaseRef.current();
-      }
+      if (!isTap && activeTouches.size === 0) onReleaseRef.current();
     };
 
-    // { passive: false } is REQUIRED for iOS Safari to allow preventDefault()
     el.addEventListener('touchstart', handleTouchStart, { passive: false });
     el.addEventListener('touchend', handleTouchEnd, { passive: false });
     el.addEventListener('touchcancel', handleTouchCancel, { passive: false });
 
-    // Also handle mouse clicks for desktop testing
-    const handleMouseDown = () => { if (!isTap) onPressRef.current(); else { onPressRef.current(); setTimeout(() => onReleaseRef.current(), 200); } };
+    const handleMouseDown = () => {
+      if (!isTap) onPressRef.current();
+      else { onPressRef.current(); setTimeout(() => onReleaseRef.current(), 200); }
+    };
     const handleMouseUp = () => { if (!isTap) onReleaseRef.current(); };
     el.addEventListener('mousedown', handleMouseDown);
     el.addEventListener('mouseup', handleMouseUp);
@@ -290,7 +126,7 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
       el.removeEventListener('mouseup', handleMouseUp);
       el.removeEventListener('mouseleave', handleMouseUp);
     };
-  }, [isTap]); // isTap is stable, effect runs once
+  }, [isTap]);
 
   return (
     <div
@@ -304,7 +140,7 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
         zIndex: 10,
         WebkitTapHighlightColor: 'transparent',
         ...(DEBUG ? {
-          background: 'rgba(255,50,50,0.3)',
+          background: 'rgba(255,50,50,0.35)',
           border: '2px solid red',
           display: 'flex',
           alignItems: 'center',
@@ -326,27 +162,54 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 export default function GameBoyShell() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { status, errorMsg, press, release, tap, restart } = useGameBoy(canvasRef);
-  const [showPressStart, setShowPressStart] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
 
-  const dismissStart = useCallback(() => setShowPressStart(false), []);
+  // Send a key event to the iframe
+  const sendKey = useCallback((btn: string, eventType: 'keydown' | 'keyup') => {
+    const mapping = BTN_TO_KEY[btn];
+    if (!mapping) return;
+    iframeRef.current?.contentWindow?.postMessage({
+      type: 'gamekey',
+      key: mapping.key,
+      keyCode: mapping.keyCode,
+      eventType,
+    }, '*');
+  }, []);
 
-  const handleStart = useCallback(() => {
-    dismissStart();
-    // Multiple START presses to navigate through title screens
-    // Press 1: dismiss any intro screen
-    tap('START', 200);
-    // Press 2: select 1 player game
-    setTimeout(() => tap('START', 200), 500);
-    // Press 3: confirm / skip any additional screen
-    setTimeout(() => tap('START', 200), 1000);
-  }, [tap, dismissStart]);
+  const pressBtn = useCallback((btn: string) => sendKey(btn, 'keydown'), [sendKey]);
+  const releaseBtn = useCallback((btn: string) => sendKey(btn, 'keyup'), [sendKey]);
+  const tapBtn = useCallback((btn: string, ms = 150) => {
+    pressBtn(btn);
+    setTimeout(() => releaseBtn(btn), ms);
+  }, [pressBtn, releaseBtn]);
 
-  const handleRestart = useCallback(() => {
-    dismissStart();
-    restart();
-  }, [restart, dismissStart]);
+  // Keyboard controls (desktop)
+  useEffect(() => {
+    const keyToBtn: Record<string, string> = {
+      ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
+      z: 'A', Z: 'A', ' ': 'A',
+      x: 'B', X: 'B',
+      Enter: 'START',
+      Shift: 'SELECT',
+    };
+
+    const down = (e: KeyboardEvent) => {
+      const btn = keyToBtn[e.key];
+      if (btn) { e.preventDefault(); pressBtn(btn); }
+    };
+    const up = (e: KeyboardEvent) => {
+      const btn = keyToBtn[e.key];
+      if (btn) { e.preventDefault(); releaseBtn(btn); }
+    };
+
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+    };
+  }, [pressBtn, releaseBtn]);
 
   // Helper: % → absolute style
   const pct = (l: number, t: number, w: number, h: number): React.CSSProperties => ({
@@ -355,17 +218,14 @@ export default function GameBoyShell() {
 
   return (
     <>
-      {/* Global style: prevent scroll bounce on iOS, use dvh */}
       <style>{`
-        html, body { 
-          overflow: hidden; 
+        html, body {
+          overflow: hidden;
           overscroll-behavior: none;
           height: 100%;
-          background: #7B2FBE;
-        }
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
+          background: #8C0CE0;
+          margin: 0;
+          padding: 0;
         }
       `}</style>
 
@@ -373,38 +233,29 @@ export default function GameBoyShell() {
         style={{
           position: 'fixed',
           inset: 0,
-          background: '#7B2FBE',
+          background: '#8C0CE0',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'hidden',
-          // Use dvh to account for Safari browser chrome
           height: '100dvh',
           touchAction: 'none',
         }}
       >
-        {/* Subtle purple vignette */}
+        {/* Radial vignette */}
         <div style={{
           position: 'fixed', inset: 0, pointerEvents: 'none',
-          background: 'radial-gradient(ellipse at center, rgba(140,60,220,0.3) 0%, rgba(80,10,140,0.6) 100%)',
+          background: 'radial-gradient(ellipse at center, rgba(160,40,255,0.25) 0%, rgba(60,0,120,0.55) 100%)',
           zIndex: 0,
         }} />
 
         {/* ── Game Boy Shell ── */}
-        {/* 
-          Skin is 944×2048 (aspect 944/2048 = 0.4609).
-          Use aspect-ratio to maintain perfect proportions.
-          Constrain by both viewport dimensions.
-        */}
         <div
           style={{
             position: 'relative',
             userSelect: 'none',
             WebkitUserSelect: 'none',
-            // aspect-ratio ensures perfect proportional scaling
             aspectRatio: '944 / 2048',
-            // Fit within viewport: constrain by height (most limiting on phones)
-            // Use 95% to ensure the full shell is always visible
             height: 'min(95dvh, calc(95vw * 2048 / 944))',
             width: 'min(calc(95dvh * 944 / 2048), 95vw)',
             maxHeight: '95dvh',
@@ -424,202 +275,124 @@ export default function GameBoyShell() {
               objectFit: 'contain',
               pointerEvents: 'none',
               userSelect: 'none',
-              WebkitUserSelect: 'none',
-              zIndex: 0,
               display: 'block',
             }}
             draggable={false}
           />
 
-          {/* ── Emulator canvas ── */}
-          <div
+          {/* ── EmulatorJS iframe — positioned exactly over the LCD bezel ── */}
+          {/* Bezel: left=6.9%, top=12.3%, width=82.2%, height=38.4% */}
+          <iframe
+            ref={iframeRef}
+            src="/emulator.html"
+            onLoad={() => setIframeLoaded(true)}
             style={{
               position: 'absolute',
               left: `${SCREEN.left}%`,
               top: `${SCREEN.top}%`,
               width: `${SCREEN.width}%`,
               height: `${SCREEN.height}%`,
-              overflow: 'hidden',
-              borderRadius: '2px',
-              zIndex: 1,
-              pointerEvents: 'none',  // canvas itself never needs pointer events
+              border: 'none',
+              display: 'block',
+              zIndex: 2,
+              background: '#000',
+              // Prevent iframe from capturing touch events — we handle them in ButtonZones
+              pointerEvents: 'none',
             }}
-          >
-            <canvas
-              ref={canvasRef}
-              style={{
-                position: 'absolute', top: 0, left: 0,
-                width: '100%', height: '100%',
-                display: 'block',
-                imageRendering: 'pixelated',
-                pointerEvents: 'none',
-              }}
-            />
-
-            {/* Loading */}
-            {status === 'loading' && (
-              <div style={{
-                position: 'absolute', inset: 0,
-                display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(10,20,10,0.97)', zIndex: 5,
-              }}>
-                <div style={{
-                  fontFamily: "'Press Start 2P', monospace",
-                  color: '#8bac0f',
-                  fontSize: 'clamp(5px, 2vw, 11px)',
-                  lineHeight: 2, textAlign: 'center',
-                }}>
-                  <div style={{ fontSize: 'clamp(6px, 2.5vw, 13px)', marginBottom: '8px' }}>GAME BOX</div>
-                  <div>LOADING...</div>
-                  <div style={{ marginTop: '6px', opacity: 0.55, fontSize: 'clamp(4px, 1.5vw, 8px)' }}>
-                    SUPER MARIO BROS MINI
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Error */}
-            {status === 'error' && (
-              <div style={{
-                position: 'absolute', inset: 0,
-                display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', padding: '8px',
-                background: 'rgba(20,0,0,0.97)', zIndex: 5,
-              }}>
-                <div style={{
-                  fontFamily: "'Press Start 2P', monospace",
-                  color: '#ff4444',
-                  fontSize: 'clamp(4px, 1.5vw, 8px)',
-                  lineHeight: 2, textAlign: 'center',
-                }}>
-                  <div style={{ marginBottom: '6px' }}>ERROR</div>
-                  <div style={{ fontSize: 'clamp(3px, 1vw, 6px)', color: '#ff8888', wordBreak: 'break-all' }}>
-                    {errorMsg.slice(0, 100)}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* PRESS START placeholder - actual overlay is outside this div */}
-          </div>
+            allow="autoplay"
+            title="Game Boy Emulator"
+          />
 
           {/* Scanline overlay */}
           <div style={{
             position: 'absolute',
             left: `${SCREEN.left}%`, top: `${SCREEN.top}%`,
             width: `${SCREEN.width}%`, height: `${SCREEN.height}%`,
-            background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.025) 1px, rgba(0,0,0,0.025) 2px)',
+            background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.02) 1px, rgba(0,0,0,0.02) 2px)',
             zIndex: 5, borderRadius: '2px', pointerEvents: 'none',
           }} />
 
+          {/* Loading overlay — shown until iframe loads */}
+          {!iframeLoaded && (
+            <div style={{
+              position: 'absolute',
+              left: `${SCREEN.left}%`, top: `${SCREEN.top}%`,
+              width: `${SCREEN.width}%`, height: `${SCREEN.height}%`,
+              display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(10,20,10,0.97)', zIndex: 6,
+              borderRadius: '2px',
+            }}>
+              <div style={{
+                fontFamily: "'Press Start 2P', monospace",
+                color: '#8bac0f',
+                fontSize: 'clamp(5px, 2vw, 11px)',
+                lineHeight: 2, textAlign: 'center',
+              }}>
+                <div style={{ fontSize: 'clamp(6px, 2.5vw, 13px)', marginBottom: '8px' }}>GAME BOX</div>
+                <div>LOADING...</div>
+                <div style={{ marginTop: '6px', opacity: 0.55, fontSize: 'clamp(4px, 1.5vw, 8px)' }}>
+                  SUPER MARIO BROS MINI
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* ════════════════════════════════════════
-              BUTTON OVERLAY ZONES — Pointer Events
-              Each button is its own absolute div.
-              touchAction: none is REQUIRED for iOS.
+              BUTTON OVERLAY ZONES
           ════════════════════════════════════════ */}
 
           {/* D-pad UP */}
           <ButtonZone label="▲"
             style={pct(DPAD_CX - DPAD_ARM_W / 2, DPAD_CY - DPAD_ARM_H * 2.3, DPAD_ARM_W, DPAD_ARM_H * 1.9)}
-            onPress={() => { dismissStart(); press('UP'); }}
-            onRelease={() => release('UP')} />
+            onPress={() => pressBtn('UP')}
+            onRelease={() => releaseBtn('UP')} />
 
           {/* D-pad DOWN */}
           <ButtonZone label="▼"
             style={pct(DPAD_CX - DPAD_ARM_W / 2, DPAD_CY + DPAD_ARM_H * 0.4, DPAD_ARM_W, DPAD_ARM_H * 1.9)}
-            onPress={() => { dismissStart(); press('DOWN'); }}
-            onRelease={() => release('DOWN')} />
+            onPress={() => pressBtn('DOWN')}
+            onRelease={() => releaseBtn('DOWN')} />
 
           {/* D-pad LEFT */}
           <ButtonZone label="◀"
             style={pct(DPAD_CX - DPAD_ARM_W * 2.9, DPAD_CY - DPAD_ARM_H / 2, DPAD_ARM_W * 2.3, DPAD_ARM_H)}
-            onPress={() => { dismissStart(); press('LEFT'); }}
-            onRelease={() => release('LEFT')} />
+            onPress={() => pressBtn('LEFT')}
+            onRelease={() => releaseBtn('LEFT')} />
 
           {/* D-pad RIGHT */}
           <ButtonZone label="▶"
             style={pct(DPAD_CX + DPAD_ARM_W * 0.6, DPAD_CY - DPAD_ARM_H / 2, DPAD_ARM_W * 2.3, DPAD_ARM_H)}
-            onPress={() => { dismissStart(); press('RIGHT'); }}
-            onRelease={() => release('RIGHT')} />
+            onPress={() => pressBtn('RIGHT')}
+            onRelease={() => releaseBtn('RIGHT')} />
 
           {/* A button */}
           <ButtonZone label="A"
             style={{ ...pct(A_CX - A_R, A_CY - A_R, A_R * 2, A_R * 2), borderRadius: '50%' }}
-            onPress={() => { dismissStart(); press('A'); }}
-            onRelease={() => release('A')} />
+            onPress={() => pressBtn('A')}
+            onRelease={() => releaseBtn('A')} />
 
           {/* B button */}
           <ButtonZone label="B"
             style={{ ...pct(B_CX - B_R, B_CY - B_R, B_R * 2, B_R * 2), borderRadius: '50%' }}
-            onPress={() => { dismissStart(); press('B'); }}
-            onRelease={() => release('B')} />
+            onPress={() => pressBtn('B')}
+            onRelease={() => releaseBtn('B')} />
 
-          {/* SELECT / INFO pill */}
+          {/* SELECT pill */}
           <ButtonZone label="SEL"
             style={{ ...pct(SELECT_L, SELECT_T, PILL_W, PILL_H), borderRadius: '99px' }}
-            onPress={() => { dismissStart(); tap('SELECT', 200); }}
+            onPress={() => tapBtn('SELECT', 150)}
             onRelease={() => {}} isTap />
 
-          {/* START / RESTART pill */}
-          <ButtonZone label="RST"
+          {/* START pill */}
+          <ButtonZone label="STA"
             style={{ ...pct(START_L, START_T, PILL_W, PILL_H), borderRadius: '99px' }}
-            onPress={handleRestart}
+            onPress={() => tapBtn('START', 150)}
             onRelease={() => {}} isTap />
-
-          {/* PRESS START overlay — uses ButtonZone for iOS Safari native touch */}
-          {status === 'ready' && showPressStart && (
-            <ButtonZone
-              isTap
-              style={{
-                left: `${SCREEN.left}%`,
-                top: `${SCREEN.top + SCREEN.height * 0.55}%`,
-                width: `${SCREEN.width}%`,
-                height: `${SCREEN.height * 0.45}%`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 8,
-              }}
-              onPress={handleStart}
-              onRelease={() => {}}
-              label="START"
-            />
-          )}
-          {/* PRESS START text label (non-interactive, just visual) */}
-          {status === 'ready' && showPressStart && (
-            <div
-              style={{
-                position: 'absolute',
-                left: `${SCREEN.left}%`,
-                top: `${SCREEN.top + SCREEN.height * 0.55}%`,
-                width: `${SCREEN.width}%`,
-                height: `${SCREEN.height * 0.45}%`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 7,
-                pointerEvents: 'none',
-              }}
-            >
-              <div style={{
-                fontFamily: "'Press Start 2P', monospace",
-                color: '#fff',
-                fontSize: 'clamp(5px, 2vw, 10px)',
-                textAlign: 'center',
-                animation: 'blink 1s step-end infinite',
-                textShadow: '0 0 8px rgba(255,255,255,0.8), 0 0 16px rgba(255,255,255,0.4)',
-                letterSpacing: '0.05em',
-                userSelect: 'none',
-              }}>
-                PRESS START
-              </div>
-            </div>
-          )}
 
         </div>
 
-        {/* Keyboard hint — desktop only, fades out */}
+        {/* Keyboard hint — desktop only */}
         <KeyboardHint />
       </div>
     </>
@@ -633,19 +406,17 @@ function KeyboardHint() {
     return () => clearTimeout(t);
   }, []);
   return (
-    <div
-      style={{
-        position: 'fixed', bottom: '12px',
-        left: '50%', transform: 'translateX(-50%)',
-        zIndex: 50, pointerEvents: 'none',
-        fontFamily: "'Space Mono', monospace",
-        fontSize: 'clamp(8px, 1.2vw, 11px)',
-        color: `rgba(255,255,255,${opacity * 0.3})`,
-        whiteSpace: 'nowrap',
-        transition: 'color 1s',
-      }}
-    >
-      Arrows: Move &nbsp;|&nbsp; Space: Jump &nbsp;|&nbsp; Enter: Start
+    <div style={{
+      position: 'fixed', bottom: '12px',
+      left: '50%', transform: 'translateX(-50%)',
+      zIndex: 50, pointerEvents: 'none',
+      fontFamily: "'Space Mono', monospace",
+      fontSize: 'clamp(8px, 1.2vw, 11px)',
+      color: `rgba(255,255,255,${opacity * 0.3})`,
+      whiteSpace: 'nowrap',
+      transition: 'color 1s',
+    }}>
+      Arrows: Move &nbsp;|&nbsp; Z: Jump &nbsp;|&nbsp; Enter: Start
     </div>
   );
 }
