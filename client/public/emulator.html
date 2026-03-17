@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Game</title>
+  <link rel="stylesheet" href="/ejs/emulator.min.css" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -15,113 +16,39 @@
       width: 100%; height: 100%;
       background: #000 !important;
     }
-  </style>
-
-  <script>
-    // ══════════════════════════════════════════════════════════════════
-    // STEP 1: Intercept document.createElement to catch the virtualGamepad
-    // div before EJS appends it, and freeze its style.display to "none"
-    // ══════════════════════════════════════════════════════════════════
-    var _origCreateElement = document.createElement.bind(document);
-    var _virtualGamepadIntercepted = false;
-    document.createElement = function(tag) {
-      var el = _origCreateElement(tag);
-      if (tag === 'div' && !_virtualGamepadIntercepted) {
-        // We'll identify the virtualGamepad div when EJS adds the class
-        var _origClassListAdd = el.classList.add.bind(el.classList);
-        el.classList.add = function() {
-          _origClassListAdd.apply(this, arguments);
-          // When EJS adds ejs_virtualGamepad_parent class, freeze display
-          for (var i = 0; i < arguments.length; i++) {
-            if (arguments[i] === 'ejs_virtualGamepad_parent') {
-              _virtualGamepadIntercepted = true;
-              // Restore original createElement
-              document.createElement = _origCreateElement;
-              // Force display to none and block any future assignment
-              el.style.setProperty('display', 'none', 'important');
-              el.style.setProperty('visibility', 'hidden', 'important');
-              el.style.setProperty('pointer-events', 'none', 'important');
-              // Override the style.display setter to be a no-op
-              try {
-                var _origDisplay = Object.getOwnPropertyDescriptor(
-                  CSSStyleDeclaration.prototype, 'display'
-                ) || { get: function() { return el.style.getPropertyValue('display'); } };
-                Object.defineProperty(el.style, 'display', {
-                  get: function() { return 'none'; },
-                  set: function(v) {
-                    // Always keep it none - ignore EJS trying to show it
-                    el.style.setProperty('display', 'none', 'important');
-                  },
-                  configurable: true
-                });
-              } catch(e) {
-                console.warn('Could not override display property:', e);
-              }
-            }
-          }
-        };
-      }
-      return el;
-    };
-
-    // ══════════════════════════════════════════════════════════════════
-    // STEP 2: EJS config — set backgroundColor to black
-    // ══════════════════════════════════════════════════════════════════
-    window.EJS_player = '#game';
-    window.EJS_core = 'gb';
-    window.EJS_gameUrl = 'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
-    window.EJS_pathtodata = '/ejs/';
-    window.EJS_color = '#8C0CE0';
-    window.EJS_startOnLoaded = true;
-    window.EJS_disableLocalStorage = true;
-    window.EJS_gameName = 'Super Mario Bros Mini';
-    window.EJS_disableAutoLang = true;
-    window.EJS_cheats = [];
-    window.EJS_volume = 0.5;
-    window.EJS_backgroundColor = 'rgb(0, 0, 0)';  // Black background
-
-    window.EJS_onGameStart = function() {
-      try {
-        var emu = window.EJS_emulator;
-        if (!emu) return;
-        // Belt-and-suspenders: force touch=false
-        emu.touch = false;
-        // Hide virtualGamepad if it somehow got shown
-        if (emu.virtualGamepad) {
-          emu.virtualGamepad.style.setProperty('display', 'none', 'important');
-          emu.virtualGamepad.style.setProperty('visibility', 'hidden', 'important');
-        }
-        // Notify parent that game started
-        window.parent.postMessage({ type: 'gameReady' }, '*');
-      } catch(e) {}
-    };
-  </script>
-</head>
-<body>
-  <div id="game"></div>
-  <link rel="stylesheet" href="/ejs/emulator.min.css" />
-  <style>
-    /* Force black on all EJS containers — belt-and-suspenders */
-    .ejs_parent, .ejs_game, .ejs_canvas_parent, .ejs_game_background {
-      background: #000 !important;
-    }
-    /* Hide all EJS UI chrome */
-    .ejs_menu_bar, .ejs_start_button, .ejs_start_button_border,
-    .ejs_context_menu, .ejs_popup_container, .ejs_loading_text,
-    .ejs_loading_text_glow, .ejs_netplay, .ejs_ad_container,
-    .ejs_ad_close, .ejs_ad_iframe {
+    /* ── Hide ALL EJS chrome: toolbar, menus, loading text, start button ── */
+    .ejs_menu_bar,
+    .ejs_start_button,
+    .ejs_start_button_border,
+    .ejs_context_menu,
+    .ejs_popup_container,
+    .ejs_popup_container_box,
+    .ejs_loading_text,
+    .ejs_loading_text_glow,
+    .ejs_netplay,
+    .ejs_ad_container,
+    .ejs_ad_close,
+    .ejs_ad_iframe,
+    .ejs_virtual,
+    .ejs_dpad_main,
+    .ejs_dpad_bar,
+    .ejs_dpad_horizontal,
+    .ejs_dpad_vertical {
       display: none !important;
       visibility: hidden !important;
-    }
-    /* Hide virtual gamepad */
-    .ejs_virtualGamepad_parent,
-    [class*="ejs_virtualGamepad"] {
-      display: none !important;
-      visibility: hidden !important;
+      opacity: 0 !important;
       pointer-events: none !important;
     }
-    /* Canvas fills container */
-    .ejs_canvas, #game canvas {
+    /* Force black background on EJS parent to prevent white flash */
+    .ejs_parent,
+    .ejs_game,
+    .ejs_game_background,
+    .ejs_canvas_parent {
+      background: #000 !important;
+    }
+    /* Make canvas fill the container perfectly */
+    .ejs_canvas,
+    #game canvas {
       position: absolute !important;
       top: 0 !important; left: 0 !important;
       width: 100% !important;
@@ -131,42 +58,140 @@
       image-rendering: crisp-edges;
     }
   </style>
+  <!-- Set ALL globals BEFORE loader.js runs -->
+  <script>
+    window.EJS_player = '#game';
+    window.EJS_core = 'gb';
+    window.EJS_gameUrl = 'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
+    window.EJS_pathtodata = '/ejs/';
+    window.EJS_color = '#8C0CE0';
+    window.EJS_startOnLoaded = true;
+    window.EJS_disableLocalStorage = true;
+    window.EJS_gameName = 'Super Mario Bros Mini';
+    window.EJS_disableAutoLang = false;
+    window.EJS_paths = {
+      'en-US': '/ejs/localization/en-US.json',
+    };
+    window.EJS_loadStateOnStart = null;
+    window.EJS_saveStateOnExit = null;
+    window.EJS_cheats = [];
+    window.EJS_volume = 0.5;
+  </script>
+</head>
+<body>
+  <div id="game"></div>
   <script src="/ejs/loader.js"></script>
   <script>
     // ── GB button IDs for simulateInput(player, buttonId, value) ──
-    // 0=B, 2=SELECT, 3=START, 4=UP, 5=DOWN, 6=LEFT, 7=RIGHT, 8=A
-    var BTN_IDS = { B:0, SELECT:2, START:3, UP:4, DOWN:5, LEFT:6, RIGHT:7, A:8 };
+    // These match EmulatorJS's defaultControllers for the 'gb' core:
+    //   0=B, 2=SELECT, 3=START, 4=UP, 5=DOWN, 6=LEFT, 7=RIGHT, 8=A
+    const BTN_IDS = {
+      B:      0,
+      SELECT: 2,
+      START:  3,
+      UP:     4,
+      DOWN:   5,
+      LEFT:   6,
+      RIGHT:  7,
+      A:      8,
+    };
 
     function pressButton(btn, pressed) {
-      var id = BTN_IDS[btn];
+      const id = BTN_IDS[btn];
       if (id === undefined) return;
-      var emu = window.EJS_emulator;
+      const emu = window.EJS_emulator;
       if (!emu || !emu.gameManager) return;
-      try { emu.gameManager.simulateInput(0, id, pressed ? 1 : 0); } catch(e) {}
+      const value = pressed ? 1 : 0;
+      try {
+        emu.gameManager.simulateInput(0, id, value);
+      } catch(e) {
+        console.warn('simulateInput failed:', e);
+      }
     }
 
+    // Listen for messages from parent frame
     window.addEventListener('message', function(e) {
       if (!e.data) return;
+
+      // Button press/release: { type: 'gamekey', btn: 'A', eventType: 'keydown'|'keyup' }
       if (e.data.type === 'gamekey') {
         pressButton(e.data.btn, e.data.eventType === 'keydown');
-      } else if (e.data.type === 'restart') {
+        return;
+      }
+
+      // Restart: { type: 'restart' } — uses EJS API, NOT location.reload()
+      if (e.data.type === 'restart') {
         try {
-          var emu = window.EJS_emulator;
-          if (emu && emu.gameManager) emu.gameManager.restart();
+          const emu = window.EJS_emulator;
+          if (emu && typeof emu.restart === 'function') {
+            emu.restart();
+          } else if (emu && emu.gameManager && typeof emu.gameManager.restart === 'function') {
+            emu.gameManager.restart();
+          }
+        } catch(err) {
+          console.warn('Restart failed:', err);
+        }
+        return;
+      }
+
+      // Pause toggle: { type: 'pause' }
+      if (e.data.type === 'pause') {
+        try {
+          const emu = window.EJS_emulator;
+          if (emu) emu.togglePause();
         } catch(err) {}
+        return;
       }
     });
 
-    // Fallback: poll and notify parent when game is ready
+    // Notify parent when game is ready (emulator started)
+    // Also hide any remaining loading text elements
     function checkReady() {
-      var emu = window.EJS_emulator;
+      const emu = window.EJS_emulator;
+
+      // Continuously hide loading text while waiting
+      document.querySelectorAll('.ejs_loading_text, .ejs_start_button, .ejs_menu_bar').forEach(function(el) {
+        el.style.display = 'none';
+        el.style.visibility = 'hidden';
+        el.style.opacity = '0';
+      });
+
       if (emu && emu.started) {
         window.parent.postMessage({ type: 'gameReady' }, '*');
         return;
       }
       setTimeout(checkReady, 300);
     }
-    setTimeout(checkReady, 1000);
+    // Start polling after a short delay to let EJS initialize
+    setTimeout(checkReady, 800);
+
+    // Also use MutationObserver to hide elements as they're added
+    var observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        mutation.addedNodes.forEach(function(node) {
+          if (node.nodeType === 1) {
+            var classesToHide = [
+              'ejs_loading_text', 'ejs_start_button', 'ejs_menu_bar',
+              'ejs_context_menu', 'ejs_popup_container', 'ejs_virtual',
+              'ejs_dpad_main', 'ejs_ad_container'
+            ];
+            classesToHide.forEach(function(cls) {
+              if (node.classList && node.classList.contains(cls)) {
+                node.style.display = 'none';
+                node.style.visibility = 'hidden';
+              }
+              if (node.querySelectorAll) {
+                node.querySelectorAll('.' + cls).forEach(function(el) {
+                  el.style.display = 'none';
+                  el.style.visibility = 'hidden';
+                });
+              }
+            });
+          }
+        });
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
   </script>
 </body>
 </html>
