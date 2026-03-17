@@ -18,9 +18,10 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 const SKIN_URL =
   'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/gameboy-skin_288fe3ff.png';
 
-// ── Screen area: exact bezel bounds from pixel-accurate image analysis ──
-// Skin: 944×2048px  |  Bezel: left=6.9%, top=12.3%, right=89.1%, bottom=50.7%
-const SCREEN = { left: 6.9, top: 12.3, width: 82.2, height: 38.4 };
+// ── Screen area: inner LCD display bounds (pixel-accurate from image analysis) ──
+// Skin: 944×2048px  |  Outer bezel: left=6.9%, top=12.3%, right=89.1%, bottom=50.8%
+// Inner LCD: left=11.5%, top=14.5%, right=89.0%, bottom=48.9%
+const SCREEN = { left: 11.5, top: 14.5, width: 77.5, height: 34.4 };
 
 // ── D-pad (center: 28.3%, 65.2%) ──
 const DPAD_CX = 28.3, DPAD_CY = 65.2;
@@ -30,24 +31,18 @@ const DPAD_ARM_W = 8, DPAD_ARM_H = 6;
 const A_CX = 82.4, A_CY = 62.7, A_R = 6.5;
 const B_CX = 61.8, B_CY = 67.8, B_R = 5.5;
 
-// ── Pills ──
-const PILL_W = 12, PILL_H = 5;
-const SELECT_L = 31.4, SELECT_T = 87;
-const START_L  = 47,   START_T  = 86.3;
+// ── Pills (SELECT=INFO pill, START=RESTART pill) ──
+// Pixel-accurate from image: INFO pill center ~x=370 (39.2%), y=1810 (88.4%)
+//                            RESTART pill center ~x=510 (54.0%), y=1810 (88.4%)
+const PILL_W = 14, PILL_H = 4.5;
+const SELECT_L = 32.0, SELECT_T = 86.2;  // INFO pill
+const START_L  = 46.5, START_T  = 86.2;  // RESTART pill
+
+// ── INFO / RESTART labels (same pills, larger tap zone) ──
+const INFO_L = 32.0, INFO_T = 86.2;
+const RESTART_L = 46.5, RESTART_T = 86.2;
 
 const DEBUG = false;
-
-// EJS key names for the GB core
-const BTN_TO_KEY: Record<string, { key: string; keyCode: number }> = {
-  UP:     { key: 'ArrowUp',    keyCode: 38 },
-  DOWN:   { key: 'ArrowDown',  keyCode: 40 },
-  LEFT:   { key: 'ArrowLeft',  keyCode: 37 },
-  RIGHT:  { key: 'ArrowRight', keyCode: 39 },
-  A:      { key: 'x',          keyCode: 88 },
-  B:      { key: 's',          keyCode: 83 },
-  START:  { key: 'Enter',      keyCode: 13 },
-  SELECT: { key: 'v',          keyCode: 86 },
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ButtonZone — native touch events (passive:false) for iOS Safari
@@ -163,35 +158,54 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
 // ─────────────────────────────────────────────────────────────────────────────
 export default function GameBoyShell() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [gameReady, setGameReady] = useState(false);
 
-  // Send a key event to the iframe
-  const sendKey = useCallback((btn: string, eventType: 'keydown' | 'keyup') => {
-    const mapping = BTN_TO_KEY[btn];
-    if (!mapping) return;
+  // Send a button event to the iframe
+  const sendBtn = useCallback((btn: string, eventType: 'keydown' | 'keyup') => {
     iframeRef.current?.contentWindow?.postMessage({
       type: 'gamekey',
-      key: mapping.key,
-      keyCode: mapping.keyCode,
+      btn,
       eventType,
     }, '*');
   }, []);
 
-  const pressBtn = useCallback((btn: string) => sendKey(btn, 'keydown'), [sendKey]);
-  const releaseBtn = useCallback((btn: string) => sendKey(btn, 'keyup'), [sendKey]);
+  const pressBtn = useCallback((btn: string) => sendBtn(btn, 'keydown'), [sendBtn]);
+  const releaseBtn = useCallback((btn: string) => sendBtn(btn, 'keyup'), [sendBtn]);
   const tapBtn = useCallback((btn: string, ms = 150) => {
     pressBtn(btn);
     setTimeout(() => releaseBtn(btn), ms);
   }, [pressBtn, releaseBtn]);
 
-  // Keyboard controls (desktop)
+  // Restart via EJS API (not page reload)
+  const restartGame = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage({ type: 'restart' }, '*');
+  }, []);
+
+  // Listen for gameReady message from iframe
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'gameReady') {
+        setGameReady(true);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  // Fallback: hide loading overlay after 15 seconds regardless
+  useEffect(() => {
+    const t = setTimeout(() => setGameReady(true), 15000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Keyboard controls (desktop) — forward to iframe
   useEffect(() => {
     const keyToBtn: Record<string, string> = {
       ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
-      z: 'A', Z: 'A', ' ': 'A',
+      z: 'A', Z: 'A',
       x: 'B', X: 'B',
       Enter: 'START',
-      Shift: 'SELECT',
+      v: 'SELECT', V: 'SELECT',
     };
 
     const down = (e: KeyboardEvent) => {
@@ -227,6 +241,7 @@ export default function GameBoyShell() {
           margin: 0;
           padding: 0;
         }
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
       `}</style>
 
       <div
@@ -280,48 +295,17 @@ export default function GameBoyShell() {
             draggable={false}
           />
 
-          {/* ── EmulatorJS iframe — positioned exactly over the LCD bezel ── */}
-          {/* Bezel: left=6.9%, top=12.3%, width=82.2%, height=38.4% */}
-          <iframe
-            ref={iframeRef}
-            src="/emulator.html"
-            onLoad={() => setIframeLoaded(true)}
-            style={{
-              position: 'absolute',
-              left: `${SCREEN.left}%`,
-              top: `${SCREEN.top}%`,
-              width: `${SCREEN.width}%`,
-              height: `${SCREEN.height}%`,
-              border: 'none',
-              display: 'block',
-              zIndex: 2,
-              background: '#000',
-              // Prevent iframe from capturing touch events — we handle them in ButtonZones
-              pointerEvents: 'none',
-            }}
-            allow="autoplay"
-            title="Game Boy Emulator"
-          />
-
-          {/* Scanline overlay */}
-          <div style={{
-            position: 'absolute',
-            left: `${SCREEN.left}%`, top: `${SCREEN.top}%`,
-            width: `${SCREEN.width}%`, height: `${SCREEN.height}%`,
-            background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.02) 1px, rgba(0,0,0,0.02) 2px)',
-            zIndex: 5, borderRadius: '2px', pointerEvents: 'none',
-          }} />
-
-          {/* Loading overlay — shown until iframe loads */}
-          {!iframeLoaded && (
+          {/* ── Loading overlay — shown until game is ready ── */}
+          {!gameReady && (
             <div style={{
               position: 'absolute',
               left: `${SCREEN.left}%`, top: `${SCREEN.top}%`,
               width: `${SCREEN.width}%`, height: `${SCREEN.height}%`,
               display: 'flex', flexDirection: 'column',
               alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(10,20,10,0.97)', zIndex: 6,
+              background: '#0a140a', zIndex: 6,
               borderRadius: '2px',
+              pointerEvents: 'none',
             }}>
               <div style={{
                 fontFamily: "'Press Start 2P', monospace",
@@ -337,6 +321,37 @@ export default function GameBoyShell() {
               </div>
             </div>
           )}
+
+          {/* ── EmulatorJS iframe — positioned over the inner LCD screen ── */}
+          {/* Inner LCD: left=11.5%, top=14.5%, width=77.5%, height=34.4% */}
+          <iframe
+            ref={iframeRef}
+            src="/emulator.html"
+            style={{
+              position: 'absolute',
+              left: `${SCREEN.left}%`,
+              top: `${SCREEN.top}%`,
+              width: `${SCREEN.width}%`,
+              height: `${SCREEN.height}%`,
+              border: 'none',
+              display: 'block',
+              zIndex: gameReady ? 4 : 3,
+              background: '#000',
+              // Allow pointer events so EJS can receive focus for audio context
+              pointerEvents: 'none',
+            }}
+            allow="autoplay"
+            title="Game Boy Emulator"
+          />
+
+          {/* Scanline overlay */}
+          <div style={{
+            position: 'absolute',
+            left: `${SCREEN.left}%`, top: `${SCREEN.top}%`,
+            width: `${SCREEN.width}%`, height: `${SCREEN.height}%`,
+            background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,0.02) 1px, rgba(0,0,0,0.02) 2px)',
+            zIndex: 5, borderRadius: '2px', pointerEvents: 'none',
+          }} />
 
           {/* ════════════════════════════════════════
               BUTTON OVERLAY ZONES
@@ -388,6 +403,17 @@ export default function GameBoyShell() {
           <ButtonZone label="STA"
             style={{ ...pct(START_L, START_T, PILL_W, PILL_H), borderRadius: '99px' }}
             onPress={() => tapBtn('START', 150)}
+            onRelease={() => {}} isTap />
+
+          {/* INFO pill — show keyboard hint */}
+          <ButtonZone label="NFO"
+            style={{ ...pct(INFO_L, INFO_T, PILL_W, PILL_H), borderRadius: '99px' }}
+            onPress={() => {}} onRelease={() => {}} isTap />
+
+          {/* RESTART pill — uses EJS restart API, not page reload */}
+          <ButtonZone label="RST"
+            style={{ ...pct(RESTART_L, RESTART_T, PILL_W, PILL_H), borderRadius: '99px' }}
+            onPress={() => restartGame()}
             onRelease={() => {}} isTap />
 
         </div>

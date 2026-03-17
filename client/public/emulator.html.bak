@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game</title>
+  <link rel="stylesheet" href="/ejs/emulator.min.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+    }
+    #game {
+      width: 100%; height: 100%;
+    }
+    /* Hide ALL EJS chrome — toolbar, menus, loading screens, start button */
+    .ejs_menu_bar,
+    .ejs_start_button,
+    .ejs_context_menu,
+    .ejs_popup_container,
+    .ejs_loading,
+    .ejs_loading_container,
+    .ejs_start_screen,
+    .ejs_netplay,
+    .ejs_ad_container {
+      display: none !important;
+    }
+    /* Make canvas fill the container perfectly */
+    #game canvas {
+      position: absolute !important;
+      top: 0 !important; left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+    /* Hide the EJS "Decompress game" loading overlay */
+    .ejs_loading_text,
+    .ejs_loading_bar,
+    .ejs_loading_bar_container,
+    [class*="loading"] {
+      display: none !important;
+    }
+  </style>
+  <!-- Set ALL globals BEFORE loader.js runs -->
+  <script>
+    window.EJS_player = '#game';
+    window.EJS_core = 'gb';
+    window.EJS_gameUrl = 'https://d2xsxph8kpxj0f.cloudfront.net/92674841/7HRuzqv5FoVkY7UCaEELrN/SuperMarioBrosMini_9a61d5e5.gb';
+    window.EJS_pathtodata = '/ejs/';
+    window.EJS_color = '#8C0CE0';
+    window.EJS_startOnLoaded = true;
+    window.EJS_disableLocalStorage = true;
+    window.EJS_gameName = 'Super Mario Bros Mini';
+    window.EJS_disableAutoLang = false;
+    window.EJS_paths = {
+      'en-US': '/ejs/localization/en-US.json',
+    };
+    // Prevent EJS from showing its own loading UI
+    window.EJS_loadStateOnStart = null;
+    window.EJS_saveStateOnExit = null;
+    window.EJS_cheats = [];
+    window.EJS_volume = 0.5;
+  </script>
+</head>
+<body>
+  <div id="game"></div>
+  <script src="/ejs/loader.js"></script>
+
+  <script>
+    // ── Key code map matching EJS's internal keyMap ──
+    // EJS uses keyCode numbers to look up its internal key names
+    // We dispatch synthetic KeyboardEvents with the correct keyCode
+    // so EJS picks them up through its normal event listener on document
+    const KEY_CODES = {
+      UP:     { keyCode: 38, key: 'ArrowUp',    code: 'ArrowUp' },
+      DOWN:   { keyCode: 40, key: 'ArrowDown',  code: 'ArrowDown' },
+      LEFT:   { keyCode: 37, key: 'ArrowLeft',  code: 'ArrowLeft' },
+      RIGHT:  { keyCode: 39, key: 'ArrowRight', code: 'ArrowRight' },
+      A:      { keyCode: 90, key: 'z',          code: 'KeyZ' },   // EJS default A = z
+      B:      { keyCode: 88, key: 'x',          code: 'KeyX' },   // EJS default B = x
+      START:  { keyCode: 13, key: 'Enter',      code: 'Enter' },
+      SELECT: { keyCode: 86, key: 'v',          code: 'KeyV' },
+    };
+
+    // Hold state to prevent key repeat
+    const heldKeys = new Set();
+
+    function dispatchKey(btn, type) {
+      const k = KEY_CODES[btn];
+      if (!k) return;
+      const keyId = btn + '_' + type;
+      if (type === 'keydown' && heldKeys.has(btn)) return;
+      if (type === 'keydown') heldKeys.add(btn);
+      if (type === 'keyup') heldKeys.delete(btn);
+
+      // Dispatch on document (EJS listens at document level)
+      const evt = new KeyboardEvent(type, {
+        key: k.key,
+        code: k.code,
+        keyCode: k.keyCode,
+        which: k.keyCode,
+        charCode: 0,
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+      });
+      document.dispatchEvent(evt);
+      // Also dispatch on window for good measure
+      window.dispatchEvent(evt);
+    }
+
+    // Listen for messages from parent frame
+    window.addEventListener('message', function(e) {
+      if (!e.data) return;
+
+      // Button press/release
+      if (e.data.type === 'gamekey') {
+        dispatchKey(e.data.btn, e.data.eventType);
+        return;
+      }
+
+      // Restart game via EJS API (not page reload)
+      if (e.data.type === 'restart') {
+        try {
+          if (window.EJS_emulator && typeof window.EJS_emulator.restart === 'function') {
+            window.EJS_emulator.restart();
+          }
+        } catch(err) {
+          console.warn('Restart failed:', err);
+        }
+        return;
+      }
+
+      // Toggle pause
+      if (e.data.type === 'pause') {
+        try {
+          if (window.EJS_emulator) {
+            window.EJS_emulator.togglePause();
+          }
+        } catch(err) {}
+        return;
+      }
+    });
+
+    // Notify parent when game is ready
+    function notifyReady() {
+      if (window.EJS_emulator && window.EJS_emulator.started) {
+        window.parent.postMessage({ type: 'gameReady' }, '*');
+      } else {
+        setTimeout(notifyReady, 500);
+      }
+    }
+    setTimeout(notifyReady, 2000);
+  </script>
+</body>
+</html>
