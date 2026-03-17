@@ -314,28 +314,47 @@ export default function GameBoyShell() {
             </div>
           )}
 
-          {/* ── EmulatorJS iframe — positioned over the inner LCD screen ── */}
-          {/* Inner LCD: left=13.16%, top=14.40%, width=74.18%, height=34.52% */}
-          <iframe
-            ref={iframeRef}
-            src="/emulator.html?v=20260317"
+          {/* ── EmulatorJS iframe — clipped to LCD bounds but iframe itself is full-size ── */}
+          {/* EJS requires a large canvas (>600px) to avoid ejs_small_screen mode which stops rendering */}
+          {/* Solution: clip container at LCD bounds, iframe fills the full GameBoy shell */}
+          <div
             style={{
               position: 'absolute',
               left: `${SCREEN.left}%`,
               top: `${SCREEN.top}%`,
               width: `${SCREEN.width}%`,
               height: `${SCREEN.height}%`,
-              border: 'none',
-              display: 'block',
+              overflow: 'hidden',
               zIndex: 4,
-              background: '#000',
-              pointerEvents: 'none',
-              // Keep iframe below loading overlay until ready
+              borderRadius: '2px',
               opacity: gameReady ? 1 : 0,
+              transition: 'opacity 0.3s',
             }}
-            allow="autoplay"
-            title="Game Boy Emulator"
-          />
+          >
+            {/* iframe covers the full GameBoy shell, clipped to LCD window by parent overflow:hidden */}
+            {/* Percentages are relative to the clip container (which is SCREEN.width% x SCREEN.height% of shell) */}
+            {/* left = -SCREEN.left/SCREEN.width*100 = -13.16/74.18*100 = -17.74% */}
+            {/* top  = -SCREEN.top/SCREEN.height*100 = -14.40/34.52*100 = -41.71% */}
+            {/* w    = 100/SCREEN.width*100 = 100/74.18*100 = 134.8% */}
+            {/* h    = 100/SCREEN.height*100 = 100/34.52*100 = 289.7% */}
+            <iframe
+              ref={iframeRef}
+              src="/emulator.html?v=20260317"
+              style={{
+                position: 'absolute',
+                left: '0',
+                top: '0',
+                width: '134.8%',
+                height: '289.7%',
+                border: 'none',
+                display: 'block',
+                background: '#000',
+                pointerEvents: 'none',
+              }}
+              allow="autoplay"
+              title="Game Boy Emulator"
+            />
+          </div>
 
           {/* Scanline overlay */}
           <div style={{
