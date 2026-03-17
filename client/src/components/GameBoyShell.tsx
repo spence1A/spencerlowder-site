@@ -171,7 +171,13 @@ export default function GameBoyShell() {
   );
 
   const restartGame = useCallback(() => {
-    iframeRef.current?.contentWindow?.postMessage({ type: 'restart' }, '*');
+    // Reload the iframe to restart the game safely on mobile
+    // (gameManager.restart() can crash on mobile Safari due to audio context issues)
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    setGameReady(false);
+    setNeedsTap(true);
+    iframe.src = '/emulator.html?v=20260317-v3&r=' + Date.now();
   }, []);
 
   useEffect(() => {
@@ -422,7 +428,7 @@ export default function GameBoyShell() {
           >
             <iframe
               ref={iframeRef}
-              src="/emulator.html?v=20260317-shellsimplify"
+              src="/emulator.html?v=20260317-v3"
               style={{
                 position: 'absolute',
                 left: '0',
@@ -499,9 +505,9 @@ export default function GameBoyShell() {
           />
 
           <ButtonZone
-            label="SEL"
+            label="STA"
             style={{ ...pct(SELECT_L, SELECT_T, PILL_W, PILL_H), borderRadius: '99px' }}
-            onPress={() => tapBtn('SELECT', 150)}
+            onPress={() => tapBtn('START', 150)}
             onRelease={() => {}}
             isTap
           />

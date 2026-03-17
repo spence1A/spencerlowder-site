@@ -58,8 +58,10 @@
     window.EJS_gameName = 'Super Mario Bros Mini';
     window.EJS_color = '#8bac0f';
     window.EJS_backgroundColor = 'rgb(0, 0, 0)';
-    window.EJS_cacheBust = '20260317-shellsimplify';
-
+    // Start muted to avoid audio context suspension crash on mobile Safari.
+    // Audio is enabled after the first user interaction.
+    window.EJS_volume = 0;
+    window.EJS_cacheBust = '20260317-v3';
     window.EJS_onGameStart = function() {
       try {
         window.parent.postMessage({ type: 'gameReady' }, '*');
@@ -69,10 +71,11 @@
 </head>
 <body>
   <div id="game"></div>
-  <script src="/ejs/loader.js?v=20260317-shellsimplify"></script>
+  <script src="/ejs/loader.js?v=20260317-v3"></script>
   <script>
     var BTN_IDS = { B:0, SELECT:2, START:3, UP:4, DOWN:5, LEFT:6, RIGHT:7, A:8 };
     var interactionSent = false;
+    var audioUnlocked = false;
 
     function notifyInteraction() {
       if (interactionSent) return;
@@ -82,14 +85,32 @@
       } catch (e) {}
     }
 
-    function resumeAudio() {
+    function tryUnlockAudio() {
+      if (audioUnlocked) return;
       try {
-        var ctx = window.EJS_emulator && window.EJS_emulator.Module && window.EJS_emulator.Module.AL && window.EJS_emulator.Module.AL.currentCtx && window.EJS_emulator.Module.AL.currentCtx.audioCtx;
-        if (ctx && ctx.state !== 'running') {
-          var resumed = ctx.resume();
-          if (resumed && typeof resumed.catch === 'function') {
-            resumed.catch(function() {});
+        var emu = window.EJS_emulator;
+        if (!emu || !emu.Module || !emu.Module.AL) return;
+        var alCtx = emu.Module.AL.currentCtx;
+        if (!alCtx || !alCtx.audioCtx) return;
+        var ctx = alCtx.audioCtx;
+        if (ctx.state === 'suspended') {
+          var p = ctx.resume();
+          if (p && typeof p.then === 'function') {
+            p.then(function() {
+              audioUnlocked = true;
+              // Unmute at 50% volume after audio context resumes
+              try {
+                if (emu.setVolume) emu.setVolume(0.5);
+              } catch(e2) {}
+            }).catch(function() {});
+          } else {
+            audioUnlocked = true;
           }
+        } else if (ctx.state === 'running') {
+          audioUnlocked = true;
+          try {
+            if (emu.setVolume) emu.setVolume(0.5);
+          } catch(e2) {}
         }
       } catch (e) {}
     }
@@ -106,7 +127,7 @@
 
     function handleRealInteraction() {
       notifyInteraction();
-      resumeAudio();
+      tryUnlockAudio();
     }
 
     window.addEventListener('pointerdown', handleRealInteraction, { passive: true });
