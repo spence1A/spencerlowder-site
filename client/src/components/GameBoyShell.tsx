@@ -156,9 +156,15 @@ function ButtonZone({ style, onPress, onRelease, isTap = false, label }: BtnProp
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
+// Minimum iframe width in px for EJS to use ejs_big_screen mode (game loop runs)
+const EJS_MIN_WIDTH = 600;
+
 export default function GameBoyShell() {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const [gameReady, setGameReady] = useState(false);
+  // iframeScale: scale factor applied to the iframe so it's always >=600px wide internally
+  const [iframeScale, setIframeScale] = useState(1);
 
   // Send a button event to the iframe
   const sendBtn = useCallback((btn: string, eventType: 'keydown' | 'keyup') => {
@@ -179,6 +185,26 @@ export default function GameBoyShell() {
   // Restart via EJS API (not page reload)
   const restartGame = useCallback(() => {
     iframeRef.current?.contentWindow?.postMessage({ type: 'restart' }, '*');
+  }, []);
+
+  // ResizeObserver: keep iframe scale so internal width >= EJS_MIN_WIDTH
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const shellW = entry.contentRect.width;
+        // LCD pixel width = shellW * SCREEN.width / 100
+        const lcdW = shellW * SCREEN.width / 100;
+        if (lcdW > 0) {
+          // scale so iframe internal width = max(lcdW, EJS_MIN_WIDTH)
+          const scale = lcdW >= EJS_MIN_WIDTH ? 1 : lcdW / EJS_MIN_WIDTH;
+          setIframeScale(scale);
+        }
+      }
+    });
+    ro.observe(shell);
+    return () => ro.disconnect();
   }, []);
 
   // Listen for gameReady message from iframe
@@ -266,6 +292,7 @@ export default function GameBoyShell() {
 
         {/* ── Game Boy Shell ── */}
         <div
+          ref={shellRef}
           style={{
             position: 'relative',
             userSelect: 'none',
@@ -323,26 +350,45 @@ export default function GameBoyShell() {
           )}
 
           {/* ── EmulatorJS iframe — positioned over the inner LCD screen ── */}
-          {/* Inner LCD: left=11.5%, top=14.5%, width=77.5%, height=34.4% */}
-          <iframe
-            ref={iframeRef}
-            src="/emulator.html"
+          {/* EJS requires >=600px internal width to avoid ejs_small_screen mode (blank canvas). */}
+          {/* Fix: clip container at LCD bounds (overflow:hidden), iframe sized to max(lcdW, 600px), */}
+          {/* scaled down by iframeScale so it visually fits the LCD window. */}
+          <div
             style={{
               position: 'absolute',
               left: `${SCREEN.left}%`,
               top: `${SCREEN.top}%`,
               width: `${SCREEN.width}%`,
               height: `${SCREEN.height}%`,
-              border: 'none',
-              display: 'block',
+              overflow: 'hidden',
               zIndex: gameReady ? 4 : 3,
-              background: '#000',
-              // Allow pointer events so EJS can receive focus for audio context
-              pointerEvents: 'none',
+              borderRadius: '2px',
             }}
-            allow="autoplay"
-            title="Game Boy Emulator"
-          />
+          >
+            <iframe
+              ref={iframeRef}
+              src="/emulator.html"
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                // Internal size: always EJS_MIN_WIDTH (600px) wide so EJS renders in big_screen mode
+                // Scaled down by iframeScale to fit the LCD window visually
+                width: `${EJS_MIN_WIDTH}px`,
+                // Game Boy native resolution is 160×144 (aspect ratio 10:9)
+                // Use 160:144 ratio so the game canvas fills the full LCD height
+                height: `${EJS_MIN_WIDTH * (144 / 160)}px`,
+                border: 'none',
+                display: 'block',
+                background: '#000',
+                pointerEvents: 'none',
+                transformOrigin: '0 0',
+                transform: `scale(${iframeScale})`,
+              }}
+              allow="autoplay"
+              title="Game Boy Emulator"
+            />
+          </div>
 
           {/* Scanline overlay */}
           <div style={{
