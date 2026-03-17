@@ -1,4 +1,4 @@
-@import "tailwindcss";
+﻿@import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
@@ -117,8 +117,15 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    background: #050608;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
