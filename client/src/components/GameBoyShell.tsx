@@ -27,6 +27,8 @@ const START_T = 86.9;
 const DEBUG = false;
 const MIN_EMULATOR_WIDTH = 600;
 
+const EMULATOR_URL = '/emulator.html?v=20260701-v4';
+
 interface BtnProps {
   style: CSSProperties;
   onPress: () => void;
@@ -149,16 +151,38 @@ export default function GameBoyShell() {
   const [needsTap, setNeedsTap] = useState(true);
   const [lcdSize, setLcdSize] = useState({ width: 0, height: 0 });
 
-  const sendBtn = useCallback((btn: string, eventType: 'keydown' | 'keyup') => {
-    iframeRef.current?.contentWindow?.postMessage(
-      {
-        type: 'gamekey',
-        btn,
-        eventType,
-      },
-      '*',
-    );
+  // The iframe is same-origin, so we can call into it directly. Calling
+  // __unlockAudio() synchronously from inside our own gesture handlers
+  // carries user activation into the iframe, letting it resume its
+  // AudioContext (postMessage does NOT carry activation, which is why
+  // audio previously stayed suspended and the page got killed on iOS).
+  const unlockAudio = useCallback(() => {
+    try {
+      const win = iframeRef.current?.contentWindow as
+        | (Window & { __unlockAudio?: () => void })
+        | null
+        | undefined;
+      win?.__unlockAudio?.();
+    } catch {
+      /* iframe not ready yet */
+    }
+    setNeedsTap(false);
   }, []);
+
+  const sendBtn = useCallback(
+    (btn: string, eventType: 'keydown' | 'keyup') => {
+      if (eventType === 'keydown') unlockAudio();
+      iframeRef.current?.contentWindow?.postMessage(
+        {
+          type: 'gamekey',
+          btn,
+          eventType,
+        },
+        '*',
+      );
+    },
+    [unlockAudio],
+  );
 
   const pressBtn = useCallback((btn: string) => sendBtn(btn, 'keydown'), [sendBtn]);
   const releaseBtn = useCallback((btn: string) => sendBtn(btn, 'keyup'), [sendBtn]);
@@ -171,13 +195,13 @@ export default function GameBoyShell() {
   );
 
   const restartGame = useCallback(() => {
-    // Reload the iframe to restart the game safely on mobile
-    // (gameManager.restart() can crash on mobile Safari due to audio context issues)
+    // Reload the iframe to restart the game. Calling gameManager.restart()
+    // in place trips EmulatorJS's exit/abort path; a fresh iframe is safe.
     const iframe = iframeRef.current;
     if (!iframe) return;
     setGameReady(false);
     setNeedsTap(true);
-    iframe.src = '/emulator.html?v=20260317-v3&r=' + Date.now();
+    iframe.src = EMULATOR_URL + '&r=' + Date.now();
   }, []);
 
   useEffect(() => {
@@ -299,6 +323,7 @@ export default function GameBoyShell() {
       `}</style>
 
       <div
+        onPointerDown={unlockAudio}
         style={{
           position: 'fixed',
           inset: 0,
@@ -428,7 +453,7 @@ export default function GameBoyShell() {
           >
             <iframe
               ref={iframeRef}
-              src="/emulator.html?v=20260317-v3"
+              src={EMULATOR_URL}
               style={{
                 position: 'absolute',
                 left: '0',

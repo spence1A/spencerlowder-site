@@ -58,24 +58,55 @@
     window.EJS_gameName = 'Super Mario Bros Mini';
     window.EJS_color = '#8bac0f';
     window.EJS_backgroundColor = 'rgb(0, 0, 0)';
-    // Start muted to avoid audio context suspension crash on mobile Safari.
-    // Audio is enabled after the first user interaction.
+    // Start muted; real volume is applied by __unlockAudio() once the
+    // AudioContext has been resumed inside a user gesture.
     window.EJS_volume = 0;
-    window.EJS_cacheBust = '20260317-v3';
+    window.EJS_cacheBust = '20260701-v4';
+
+    // ---------------------------------------------------------------
+    // FIX 1: EmulatorJS's checkStarted() runs a 10ms infinite polling
+    // loop on mobile Safari whenever the audio context is suspended.
+    // The popup button it creates has no click handler (and our CSS
+    // hides it anyway), so the loop can never terminate. Replace it
+    // before the emulator instance is created; audio resume is handled
+    // by __unlockAudio() below instead.
+    // ---------------------------------------------------------------
+    (function neuterCheckStarted() {
+      if (window.EmulatorJS && window.EmulatorJS.prototype) {
+        window.EmulatorJS.prototype.checkStarted = function () {};
+      } else {
+        setTimeout(neuterCheckStarted, 20);
+      }
+    })();
+
+    // ---------------------------------------------------------------
+    // FIX 2: If the game starts while the audio context is suspended
+    // (always the case on iOS before a user gesture), pause the core.
+    // A paused core cannot stall the main thread or queue audio into a
+    // context that never drains — which is what was getting the page
+    // killed by iOS after ~15 seconds. The first real user gesture
+    // resumes both the audio context and the core (see __unlockAudio).
+    // The parent page already shows "TAP SCREEN TO START", so pausing
+    // until the first tap matches the existing UX.
+    // ---------------------------------------------------------------
     window.EJS_onGameStart = function() {
       try {
         window.parent.postMessage({ type: 'gameReady' }, '*');
       } catch (e) {}
+      [50, 500, 2000].forEach(function(t) {
+        setTimeout(function() { window.__pauseIfSuspended && window.__pauseIfSuspended(); }, t);
+      });
     };
   </script>
 </head>
 <body>
   <div id="game"></div>
-  <script src="/ejs/loader.js?v=20260317-v3"></script>
+  <script src="/ejs/loader.js?v=20260701-v4"></script>
   <script>
     var BTN_IDS = { B:0, SELECT:2, START:3, UP:4, DOWN:5, LEFT:6, RIGHT:7, A:8 };
     var interactionSent = false;
     var audioUnlocked = false;
+    var corePaused = false;
 
     function notifyInteraction() {
       if (interactionSent) return;
@@ -85,35 +116,80 @@
       } catch (e) {}
     }
 
-    function tryUnlockAudio() {
-      if (audioUnlocked) return;
+    function getAudioCtx() {
       try {
         var emu = window.EJS_emulator;
-        if (!emu || !emu.Module || !emu.Module.AL) return;
-        var alCtx = emu.Module.AL.currentCtx;
-        if (!alCtx || !alCtx.audioCtx) return;
-        var ctx = alCtx.audioCtx;
-        if (ctx.state === 'suspended') {
-          var p = ctx.resume();
-          if (p && typeof p.then === 'function') {
-            p.then(function() {
-              audioUnlocked = true;
-              // Unmute at 50% volume after audio context resumes
-              try {
-                if (emu.setVolume) emu.setVolume(0.5);
-              } catch(e2) {}
-            }).catch(function() {});
-          } else {
-            audioUnlocked = true;
-          }
-        } else if (ctx.state === 'running') {
-          audioUnlocked = true;
-          try {
-            if (emu.setVolume) emu.setVolume(0.5);
-          } catch(e2) {}
+        var al = emu && emu.Module && emu.Module.AL;
+        return (al && al.currentCtx && al.currentCtx.audioCtx) || null;
+      } catch (e) { return null; }
+    }
+
+    function pauseCore() {
+      if (corePaused) return;
+      var emu = window.EJS_emulator;
+      if (!emu || !emu.started) return;
+      try {
+        // pause(true) = dontUpdate: skip the (hidden) menu UI updates
+        if (typeof emu.pause === 'function') emu.pause(true);
+        else if (emu.gameManager) emu.gameManager.toggleMainLoop(0);
+        corePaused = true;
+      } catch (e) {}
+    }
+
+    function resumeCore() {
+      if (!corePaused) return;
+      corePaused = false;
+      var emu = window.EJS_emulator;
+      if (!emu) return;
+      try {
+        if (typeof emu.play === 'function') emu.play(true);
+        else if (emu.gameManager) emu.gameManager.toggleMainLoop(1);
+      } catch (e) {}
+    }
+
+    // Called shortly after game start (see EJS_onGameStart). Only pauses
+    // when the fault condition actually exists: a created-but-suspended
+    // audio context and no user interaction yet.
+    window.__pauseIfSuspended = function() {
+      if (audioUnlocked || interactionSent) return;
+      var ctx = getAudioCtx();
+      if (ctx && ctx.state === 'suspended') pauseCore();
+    };
+
+    function finishUnlock() {
+      resumeCore();
+      if (audioUnlocked) return;
+      audioUnlocked = true;
+      try {
+        var emu = window.EJS_emulator;
+        if (emu) {
+          // setVolume applies gain to existing sources but does not update
+          // emu.volume; set both so future sources/settings stay coherent.
+          emu.volume = 0.5;
+          if (emu.setVolume) emu.setVolume(0.5);
         }
       } catch (e) {}
     }
+
+    // Must be called from within a user gesture (a touch/click/keydown
+    // handler). The parent page calls this directly via
+    // iframe.contentWindow.__unlockAudio() — the iframe is same-origin,
+    // so user activation propagates and resume() is permitted.
+    function tryUnlockAudio() {
+      if (audioUnlocked) { resumeCore(); return; }
+      var ctx = getAudioCtx();
+      if (!ctx) { resumeCore(); return; } // no audio yet; later gestures retry
+      if (ctx.state === 'running') { finishUnlock(); return; }
+      try {
+        var p = ctx.resume();
+        if (p && typeof p.then === 'function') {
+          p.then(finishUnlock).catch(function() { resumeCore(); });
+        } else {
+          finishUnlock();
+        }
+      } catch (e) { resumeCore(); }
+    }
+    window.__unlockAudio = tryUnlockAudio;
 
     function pressButton(btn, pressed) {
       var id = BTN_IDS[btn];
